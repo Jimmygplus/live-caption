@@ -1,0 +1,14 @@
+{
+  "name": "live-caption",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time live captioning and translation in the browser (Soniox streaming ASR + translation)",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  }
+}

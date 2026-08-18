@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Live Caption &amp; Translation</title>
+<link rel="stylesheet" href="./styles.css" />
+<script>
+  // Runs before first paint so the saved theme never flashes the wrong palette.
+  (function () {
+    var saved = localStorage.getItem('lc.theme') || 'system';
+    var dark = saved === 'system'
+      ? matchMedia('(prefers-color-scheme: dark)').matches
+      : saved === 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  })();
+</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+</head>
+<body data-state="idle">
+
+<header class="bar" id="controls">
+  <div class="brand">
+    <span class="dot" id="statusDot" aria-hidden="true"></span>
+    <strong>Live Caption</strong>
+  </div>
+
+  <div class="field">
+    <label for="engine">引擎</label>
+    <select id="engine"></select>
+  </div>
+
+  <div class="field">
+    <label for="mode">方向</label>
+    <select id="mode">
+      <option value="two_way" selected>自动双向</option>
+      <option value="one_way">单向指定</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="sourceLang" id="sourceLabel">源语言</label>
+    <select id="sourceLang"></select>
+  </div>
+
+  <button id="swapBtn" class="ghost swap" type="button" title="互换源语言与译文">⇄</button>
+
+  <div class="field">
+    <label for="targetLang" id="targetLabel">译文</label>
+    <select id="targetLang"></select>
+  </div>
+
+  <div class="field">
+    <label for="translator">翻译</label>
+    <select id="translator"></select>
+  </div>
+
+  <div class="field grow">
+    <label for="device">音频输入</label>
+    <select id="device"><option value="">默认麦克风</option></select>
+  </div>
+
+  <div class="field">
+    <label for="length">字幕长度</label>
+    <select id="length">
+      <option value="short">短</option>
+      <option value="medium" selected>中</option>
+      <option value="long">长</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="view">显示</label>
+    <select id="view">
+      <option value="list" selected>列表滚动</option>
+      <option value="cinema">影院字幕</option>
+      <option value="ticker">单行横滚</option>
+    </select>
+  </div>
+
+  <button id="keysBtn" class="ghost" type="button" hidden title="填写你自己的 API 密钥">密钥</button>
+  <button id="termsBtn" class="ghost" type="button" title="行业术语与场景（提升识别和翻译准确度）">术语</button>
+  <button id="startBtn" class="primary" type="button">开始</button>
+
+  <div class="spacer"></div>
+
+  <div class="tools">
+    <div class="field compact">
+      <label for="origFontSize" title="原文字号">原</label>
+      <input id="origFontSize" type="range" min="16" max="96" step="2" value="42" />
+    </div>
+
+    <div class="field compact">
+      <label for="fontSize" title="译文字号">译</label>
+      <input id="fontSize" type="range" min="16" max="96" step="2" value="34" />
+    </div>
+
+    <button id="lockBtn" class="ghost" type="button" aria-pressed="true" title="锁定最新：始终停在最新字幕">📌</button>
+    <button id="themeBtn" class="ghost" type="button" title="主题：跟随系统 / 亮色 / 暗色">🖥</button>
+    <button id="timestampsBtn" class="ghost" type="button" aria-pressed="false" title="显示/隐藏时间戳">🕑</button>
+    <button id="theaterBtn" class="ghost" type="button" aria-pressed="false" title="剧场模式（隐藏控件，Esc 退出）">⛶</button>
+
+    <details class="menu" id="exportMenu">
+      <summary class="ghost" title="导出记录">⬇</summary>
+      <div class="menu-items">
+        <button type="button" data-export="selftest">会前自检</button>
+        <button type="button" data-export="copy">复制全文</button>
+        <button type="button" data-export="txt">下载 .txt（双语）</button>
+        <button type="button" data-export="md">下载 .md</button>
+        <button type="button" data-export="srt">下载 .srt（字幕）</button>
+        <button type="button" data-export="clear" class="danger">清空记录</button>
+      </div>
+    </details>
+  </div>
+</header>
+
+<main id="stage" aria-live="polite">
+  <div id="notice" class="notice" hidden>
+    <span id="noticeText"></span>
+    <button type="button" id="noticeAction" class="notice-action"></button>
+    <button type="button" id="noticeDismiss" class="notice-dismiss" title="忽略">✕</button>
+  </div>
+
+  <ol id="captions"></ol>
+
+  <div id="live" class="segment live" hidden>
+    <p class="original" id="liveOriginal"></p>
+    <p class="translation" id="liveTranslation"></p>
+  </div>
+
+  <button id="jumpBtn" class="jump" type="button" hidden>
+    <span id="jumpLabel">返回最新</span> ↓
+  </button>
+
+  <div id="placeholder" class="placeholder">
+    <h1>实时字幕与翻译</h1>
+    <p id="placeholderHint">选好输入设备和语言，点「开始」。</p>
+    <p class="tip">
+      要给线上会议加字幕，请把「音频输入」选成虚拟声卡（如 BlackHole / Loopback），
+      而不是麦克风 —— 否则只会听到你自己说话。
+    </p>
+  </div>
+</main>
+
+<footer class="bar" id="statusBar">
+  <span id="statusText">未连接</span>
+  <div class="meter" title="输入电平（浅色竖线为收音门限）">
+    <i id="meterFill"></i>
+    <b id="meterGate" hidden></b>
+  </div>
+  <label class="gate" title="低于门限的声音不会被送去识别，用来挡掉背景里小声说话的人">
+    门限
+    <input id="gate" type="range" min="0" max="60" step="1" value="0" />
+    <span id="gateValue" class="mono">关</span>
+  </label>
+  <span id="clock" class="mono">00:00</span>
+  <span class="spacer"></span>
+  <span id="translatorStatus" class="chip"></span>
+  <span id="counter" class="mono"></span>
+  <span id="errorText" class="error"></span>
+</footer>
+
+<dialog id="termsDialog" class="terms">
+  <form method="dialog">
+    <h2>行业术语与场景</h2>
+    <p class="hint">
+      开始前填好，识别和翻译都会用上。修改后需重新开始会话才生效。
+    </p>
+
+    <label for="termsPack">预置词库<span class="hint-inline">可多次选择叠加</span></label>
+    <p class="hint">选一个行业即可自动填入下面三栏，之后仍可自行增删。</p>
+    <div class="terms-pack">
+      <select id="termsPack"><option value="">选择行业…</option></select>
+      <button type="button" id="termsClear" class="ghost">清空全部</button>
+    </div>
+
+    <label for="termsScene">场景描述</label>
+    <p class="hint">一两句话说清这是什么会、聊什么，模型据此挑选用词。</p>
+    <textarea id="termsScene" rows="2" placeholder="例：中澳跨境支付产品的双周迭代评审，参会有产品、后端、风控。"></textarea>
+
+    <label for="termsWords">识别术语<span class="hint-inline">一行一个 · 提升听写准确度</span></label>
+    <p class="hint">黑话、产品名、人名、缩写 —— 容易被听错的都放这里。</p>
+    <textarea id="termsWords" rows="5" placeholder="灰度&#10;埋点&#10;口径&#10;Soniox&#10;PayID"></textarea>
+
+    <label for="termsPairs">翻译对照<span class="hint-inline">一行一个 · 用 = 分隔</span></label>
+    <p class="hint">指定黑话该怎么翻，治「灰度→grayscale」这类错译。</p>
+    <textarea id="termsPairs" rows="5" placeholder="灰度=canary rollout&#10;口径=methodology&#10;排期=sprint scheduling&#10;schema=表结构"></textarea>
+
+    <div class="terms-actions">
+      <span id="termsCount" class="hint"></span>
+      <span class="spacer"></span>
+      <button value="cancel" class="ghost" type="submit">取消</button>
+      <button value="save" id="termsSave" class="primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="keysDialog" class="terms">
+  <form method="dialog">
+    <h2>你的 API 密钥</h2>
+    <p class="hint">
+      密钥只存在这台设备的浏览器里，直接发给厂商，<strong>不经过任何中间服务器</strong>。
+      本站是纯静态页面，没有后端、没有账号、不记录任何内容。
+    </p>
+
+    <label for="keySoniox">Soniox 密钥<span class="hint-inline">字幕识别 · 必填</span></label>
+    <p class="hint">
+      在 <a href="https://console.soniox.com" target="_blank" rel="noopener noreferrer">console.soniox.com</a>
+      注册后创建。实时转写约 US$0.12/小时。
+    </p>
+    <input id="keySoniox" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 Soniox API Key" />
+
+    <label for="keyAnthropic">Claude 密钥<span class="hint-inline">翻译 · 选填</span></label>
+    <p class="hint">
+      在 <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>
+      创建。不填则只出字幕，或使用 Soniox 自带的流式翻译。
+    </p>
+    <input id="keyAnthropic" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 Anthropic API Key（可留空）" />
+
+    <div class="terms-actions">
+      <button type="button" id="keysClear" class="ghost danger">清除密钥</button>
+      <span class="spacer"></span>
+      <button value="cancel" class="ghost" type="submit">取消</button>
+      <button value="save" class="primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

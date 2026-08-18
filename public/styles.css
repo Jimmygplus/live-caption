@@ -1,0 +1,635 @@
+/* Theme is always stamped explicitly on <html> by the inline script in index.html,
+   which resolves "system" via matchMedia before first paint. That keeps this to
+   two blocks with no duplicated palette. */
+:root {
+  --bg: #0b0d10;
+  --bg-bar: #14171c;
+  --border: #262b33;
+  --text: #f2f5f8;
+  --muted: #9aa4b2;
+  --dim: #6b7480;
+  --accent: #5eead4;
+  --accent-dim: #14b8a6;
+  --danger: #f87171;
+  --original-size: 42px;    /* 原文 = 主字幕，在上 */
+  --translation-size: 34px; /* 译文 = 补充，在下 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #fbfbfc;
+  --bg-bar: #ffffff;
+  --border: #e2e5ea;
+  --text: #12151a;
+  --muted: #5c6672;
+  --dim: #8c94a0;
+  --accent: #0d9488;
+  --accent-dim: #0f766e;
+  --danger: #dc2626;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  overflow: hidden;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* ---------------------------------------------------------------- bars */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* Right-hand controls travel together, so they wrap as one block rather than
+   leaving a single orphaned button on its own row. */
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+footer.bar {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--dim);
+  flex: none;
+  transition: background 0.2s;
+}
+
+body[data-state="connecting"] .dot { background: #fbbf24; animation: pulse 1s infinite; }
+body[data-state="running"]    .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+body[data-state="error"]      .dot { background: var(--danger); }
+
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+.spacer { flex: 1 1 auto; }
+
+/* ---------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.field.grow { flex: 1 1 150px; max-width: 260px; }
+.field.compact { flex-direction: row; align-items: center; gap: 8px; }
+
+.field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+select, input[type="range"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  max-width: 100%;
+}
+
+select:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+select:disabled { opacity: 0.45; }
+
+input[type="range"] {
+  width: 72px;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+}
+
+.swap {
+  align-self: flex-end;
+  font-size: 15px;
+  padding: 6px 9px;
+}
+
+/* ---------------------------------------------------------------- notice */
+
+/* An author `display` rule beats the UA stylesheet's [hidden] { display: none },
+   so the attribute has to be honoured explicitly or the bar can never be closed. */
+.notice[hidden] { display: none; }
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 26px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.notice-action {
+  flex: none;
+  border-color: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.notice-dismiss {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 4px 6px;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+button, summary.ghost {
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 7px 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+button:hover, summary.ghost:hover { border-color: var(--accent-dim); }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04120f;
+  font-weight: 650;
+  padding: 8px 22px;
+  align-self: flex-end;
+}
+
+button.primary[data-running="true"] {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.ghost {
+  padding: 7px 10px;
+  color: var(--muted);
+  align-self: flex-end;
+  line-height: 1;
+}
+
+.ghost[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+button.danger { color: var(--danger); }
+
+/* ---------------------------------------------------------------- export menu */
+
+.menu { position: relative; align-self: flex-end; }
+
+.menu summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  user-select: none;
+}
+.menu summary::-webkit-details-marker { display: none; }
+.menu summary::marker { content: ""; }
+
+.menu-items {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 5px;
+  gap: 2px;
+  background: var(--bg-bar);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.menu-items button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 8px 10px;
+}
+.menu-items button:hover { background: var(--border); }
+
+/* ---------------------------------------------------------------- stage */
+
+main#stage {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 28px clamp(16px, 5vw, 72px) 40vh;
+  scroll-behavior: smooth;
+}
+
+#captions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.segment {
+  margin: 0 0 clamp(18px, 2.2vh, 34px);
+  animation: rise 0.22s ease-out;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(7px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment { animation: none; }
+  main#stage { scroll-behavior: auto; }
+}
+
+/* The original is the caption — what was actually said stays on top, at full
+   weight. The translation is added underneath it, never in place of it. */
+.segment .original {
+  margin: 0;
+  font-size: var(--original-size);
+  line-height: 1.28;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-wrap: pretty;
+}
+
+.segment .translation {
+  margin: 7px 0 0;
+  font-size: var(--translation-size);
+  line-height: 1.34;
+  color: var(--muted);
+  font-weight: 400;
+  text-wrap: pretty;
+}
+
+.segment.no-translation .translation { display: none; }
+
+.segment .meta {
+  display: none;
+  font-size: 11px;
+  color: var(--dim);
+  margin: 0 0 4px;
+  letter-spacing: 0.04em;
+}
+
+body.show-timestamps .segment .meta { display: block; }
+
+.segment.live .translation,
+.segment.live .original {
+  opacity: 0.62;
+}
+
+.segment.live .original::after {
+  content: "";
+  display: inline-block;
+  width: 0.42em;
+  height: 0.95em;
+  margin-left: 0.1em;
+  vertical-align: -0.12em;
+  background: var(--accent);
+  animation: blink 1.05s steps(2, start) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---------------------------------------------------------------- placeholder */
+
+.placeholder {
+  max-width: 640px;
+  margin: 8vh auto 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+.placeholder h1 {
+  font-size: 26px;
+  font-weight: 620;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+
+.placeholder p { margin: 0 0 12px; line-height: 1.6; font-size: 14px; }
+
+.placeholder .tip {
+  margin-top: 22px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--dim);
+  text-align: left;
+}
+
+/* ---------------------------------------------------------------- meter */
+
+.meter {
+  width: 76px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  flex: none;
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.08s linear;
+}
+
+.error { color: var(--danger); font-size: 12px; }
+
+/* ---------------------------------------------------------------- jump-to-latest */
+
+.jump {
+  position: fixed;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  background: var(--bg-bar);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3);
+  animation: rise 0.18s ease-out;
+}
+
+.jump[hidden] { display: none; }
+body.theater .jump { bottom: 32px; }
+
+/* ---------------------------------------------------------------- view modes */
+
+/* Cinema: only the newest lines, anchored low and centred, like burnt-in subs. */
+body[data-view="cinema"] main#stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: clamp(40px, 12vh, 140px);
+  overflow: hidden;
+  text-align: center;
+}
+
+body[data-view="cinema"] #captions li:not(:nth-last-child(-n+2)) { display: none; }
+body[data-view="cinema"] #captions li:nth-last-child(2) { opacity: 0.45; }
+body[data-view="cinema"] .placeholder { margin-top: auto; }
+
+/* Ticker: one line only, no wrapping, sliding in from the right. */
+body[data-view="ticker"] main#stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: clamp(24px, 8vh, 90px);
+  overflow: hidden;
+}
+
+body[data-view="ticker"] #captions li:not(:last-child) { display: none; }
+
+body[data-view="ticker"] .segment .original,
+body[data-view="ticker"] .segment .translation,
+body[data-view="ticker"] #live .original,
+body[data-view="ticker"] #live .translation {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body[data-view="ticker"] #captions li,
+body[data-view="ticker"] #live {
+  animation: slide-in 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes slide-in {
+  from { transform: translateX(28%); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-view="ticker"] #captions li,
+  body[data-view="ticker"] #live,
+  .jump { animation: none; }
+}
+
+/* ---------------------------------------------------------------- terms dialog */
+
+.terms {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-bar);
+  color: var(--text);
+  padding: 0;
+  width: min(560px, 92vw);
+  max-height: 86vh;
+}
+
+.terms::backdrop { background: rgba(0, 0, 0, 0.55); }
+
+.terms form {
+  padding: 22px 24px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 86vh;
+  overflow-y: auto;
+}
+
+.terms h2 { margin: 0 0 4px; font-size: 17px; }
+
+.terms label {
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.terms .hint { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.5; }
+.terms .hint-inline { font-weight: 400; font-size: 11px; color: var(--dim); }
+
+.terms textarea {
+  margin-top: 5px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.terms textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.terms-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.terms-actions .primary { align-self: auto; }
+
+/* ---------------------------------------------------------------- theater */
+
+body.theater { grid-template-rows: 1fr; }
+body.theater #controls,
+body.theater #statusBar { display: none; }
+body.theater main#stage { padding-top: 6vh; }
+
+/* Terms button carries a dot once vocabulary is configured. */
+.ghost.active { color: var(--accent); border-color: var(--accent-dim); }
+
+.terms-pack { display: flex; gap: 8px; align-items: center; margin-top: 5px; }
+.terms-pack select { flex: 1; }
+
+/* ---------------------------------------------------------------- speakers */
+
+/* A left rule in the speaker's colour turns a transcript into a conversation. */
+.segment[data-speaker] {
+  padding-left: 14px;
+  border-left: 3px solid var(--speaker, var(--border));
+}
+
+.segment[data-speaker="0"] { --speaker: #5eead4; }
+.segment[data-speaker="1"] { --speaker: #a78bfa; }
+.segment[data-speaker="2"] { --speaker: #fbbf24; }
+.segment[data-speaker="3"] { --speaker: #f472b6; }
+.segment[data-speaker="4"] { --speaker: #60a5fa; }
+.segment[data-speaker="5"] { --speaker: #34d399; }
+
+.segment[data-speaker] .meta { color: var(--speaker); opacity: 0.85; }
+
+/* Speaker labels carry the identity, so show them even without timestamps. */
+.segment[data-speaker] .meta { display: block; }
+
+body[data-view="cinema"] .segment[data-speaker],
+body[data-view="ticker"] .segment[data-speaker] {
+  border-left: none;
+  padding-left: 0;
+}
+
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.chip:empty { display: none; }
+.chip.warn { color: #fbbf24; border-color: #fbbf24; }
+
+/* ---------------------------------------------------------------- noise gate */
+
+.meter { position: relative; }
+
+/* Threshold marker on the level meter — set it just above the background. */
+.meter b {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.65;
+}
+.meter b[hidden] { display: none; }
+
+.meter i.gated { opacity: 0.28; }
+
+.gate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.gate input[type="range"] { width: 64px; }
+.gate .mono { min-width: 1.6em; text-align: right; }
+
+.terms input[type="password"] {
+  margin-top: 5px;
+  font: inherit;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  width: 100%;
+}
+.terms input[type="password"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.terms a { color: var(--accent); }
