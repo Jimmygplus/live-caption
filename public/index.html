@@ -57,7 +57,10 @@
 
   <div class="field grow">
     <label for="device">音频输入</label>
-    <select id="device"><option value="">默认麦克风</option></select>
+    <select id="device">
+      <option value="display">🔊 标签页 / 系统声音（浏览器捕获）</option>
+      <option value="">默认麦克风</option>
+    </select>
   </div>
 
   <div class="field">
@@ -136,8 +139,8 @@
     <h1>实时字幕与翻译</h1>
     <p id="placeholderHint">选好输入设备和语言，点「开始」。</p>
     <p class="tip">
-      要给线上会议加字幕，请把「音频输入」选成虚拟声卡（如 BlackHole / Loopback），
-      而不是麦克风 —— 否则只会听到你自己说话。
+      要给线上会议加字幕，「音频输入」选<strong>🔊 标签页 / 系统声音</strong> —— 点开始后浏览器会让你
+      挑一个标签页或整个屏幕，<strong>记得勾上「分享音频」</strong>。不需要装任何虚拟声卡。
     </p>
   </div>
 </main>

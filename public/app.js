@@ -390,11 +390,15 @@ async function refreshDevices() {
   const previous = el.device.value;
 
   el.device.innerHTML = '';
+  el.device.append(new Option('🔊 标签页 / 系统声音（浏览器捕获）', 'display'));
   el.device.append(new Option('默认麦克风', ''));
   inputs.forEach((d, i) => {
     el.device.append(new Option(d.label || `输入设备 ${i + 1}`, d.deviceId));
   });
-  if (previous && inputs.some((d) => d.deviceId === previous)) el.device.value = previous;
+  // 'display' and '' are stable pseudo-devices; real device ids are not, so only
+  // restore those if the device is still present.
+  if (previous === 'display' || previous === '') el.device.value = previous;
+  else if (previous && inputs.some((d) => d.deviceId === previous)) el.device.value = previous;
 }
 
 // ---------------------------------------------------------------- UI wiring
@@ -1053,6 +1057,39 @@ function resetStream() {
 
 // ---------------------------------------------------------------- audio capture
 
+// Capture the tab's or the system's own sound instead of a microphone. Chrome
+// on macOS 14.2+ can hand over system audio directly, so a virtual audio device
+// (BlackHole, Loopback) is no longer needed for the common case.
+async function startDisplayAudio() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error('此浏览器不支持捕获标签页/系统声音，请改用 Chrome 或 Edge。');
+  }
+
+  // Video has to be requested for the picker to appear; we never read it.
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: {
+      // Ask for the whole machine's output; Chrome falls back to tab audio.
+      systemAudio: 'include',
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+
+  if (!stream.getAudioTracks().length) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw new Error('没有捕获到声音 —— 请在弹出的窗口里勾选「分享标签页音频」或「分享系统音频」再试。');
+  }
+
+  // Ending the share from the browser's own banner must stop the session too.
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    if (app.running) void stop();
+  });
+
+  return stream;
+}
+
 async function startAudio() {
   const deviceId = el.device.value;
   // Raw audio: browser AGC / noise suppression / echo cancellation are tuned for
@@ -1068,8 +1105,12 @@ async function startAudio() {
     },
   };
 
-  io.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-  await refreshDevices(); // device labels only populate after permission is granted
+  if (deviceId === 'display') {
+    io.mediaStream = await startDisplayAudio();
+  } else {
+    io.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    await refreshDevices(); // device labels only populate after permission is granted
+  }
 
   // Ask for 16 kHz, but read back what we actually got — Safari ignores the hint.
   io.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -1777,6 +1818,13 @@ el.length.addEventListener('change', () => {
   localStorage.setItem('lc.length', el.length.value);
 });
 
+// Only the two pseudo-devices are worth remembering — real device ids rotate.
+el.device.addEventListener('change', () => {
+  if (el.device.value === 'display' || el.device.value === '') {
+    localStorage.setItem('lc.source', el.device.value);
+  }
+});
+
 el.gate.addEventListener('input', applyGate);
 
 el.stage.addEventListener('scroll', updateJumpButton, { passive: true });
@@ -2009,6 +2057,8 @@ await loadGlossaryPacks();
 fillLanguageSelects();
 await loadConfig();
 await refreshDevices();
+const savedSource = localStorage.getItem('lc.source');
+if (savedSource !== null) el.device.value = savedSource;
 setStatus('idle', '未连接');
 offerRestore();
 
