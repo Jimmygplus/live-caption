@@ -633,3 +633,23 @@ body[data-view="ticker"] .segment[data-speaker] {
 }
 .terms input[type="password"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .terms a { color: var(--accent); }
+
+/* ---------------------------------------------------------------- floating window */
+
+/* The picture-in-picture document holds only the caption stage, so the three-row
+   grid the main page uses would leave it collapsed in the top row. */
+body.pip {
+  display: block;
+  overflow: hidden;
+}
+
+body.pip main#stage {
+  height: 100vh;
+  padding: 14px 18px 18px;
+}
+
+/* Space is scarce in a small floating window — drop the decoration. */
+body.pip .segment { margin-bottom: 12px; }
+body.pip .notice,
+body.pip .placeholder { display: none; }
+body.pip .jump { bottom: 14px; padding: 6px 12px; font-size: 12px; }

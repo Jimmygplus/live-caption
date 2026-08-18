@@ -128,6 +128,7 @@ const el = {
   noticeText: $('noticeText'),
   noticeAction: $('noticeAction'),
   noticeDismiss: $('noticeDismiss'),
+  pipBtn: $('pipBtn'),
   lockBtn: $('lockBtn'),
   themeBtn: $('themeBtn'),
   timestampsBtn: $('timestampsBtn'),
@@ -179,6 +180,7 @@ const app = {
   activeTranslator: null, // vendor that actually served the last translation
   rawLog: [],             // rolling raw Soniox messages, for after-the-fact diagnosis
   mode: 'server',         // 'server' (local proxy) or 'byok' (static, user's keys)
+  pip: null,              // the floating caption window, when open
   locked: true,           // pin the view to the newest caption
 };
 
@@ -556,6 +558,64 @@ function offerRestore() {
     '恢复',
     () => restoreTranscript(data),
   );
+}
+
+// ---------------------------------------------------------------- floating window
+//
+// Document Picture-in-Picture gives a real always-on-top window that holds
+// arbitrary DOM, so the caption stage is *moved* into it rather than mirrored.
+// Every render path keeps writing to the same nodes and needs no changes; the
+// only work is carrying the styles across and putting it back on close.
+
+const pipSupported = () => 'documentPictureInPicture' in window;
+
+function copyStylesInto(target) {
+  for (const sheet of document.styleSheets) {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join('\n');
+      const style = document.createElement('style');
+      style.textContent = css;
+      target.head.append(style);
+    } catch {
+      // Cross-origin sheet — re-link it instead of reading the rules.
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = sheet.href;
+      target.head.append(link);
+    }
+  }
+}
+
+async function openPip() {
+  if (!pipSupported()) return;
+
+  const pip = await documentPictureInPicture.requestWindow({
+    width: 640,
+    height: 240,
+    disallowReturnToOpener: false,
+  });
+  app.pip = pip;
+
+  copyStylesInto(pip.document);
+  pip.document.documentElement.dataset.theme = document.documentElement.dataset.theme;
+  pip.document.documentElement.style.cssText = document.documentElement.style.cssText;
+  pip.document.body.dataset.view = el.body.dataset.view;
+  pip.document.body.classList.add('pip');
+
+  // #live is a child of #stage, so moving the stage carries the whole caption
+  // area — committed segments, the in-progress line, and the jump button.
+  pip.document.body.append(el.stage);
+
+  pip.addEventListener('pagehide', () => {
+    // Put everything back exactly where it came from, before the footer.
+    document.body.insertBefore(el.stage, document.getElementById('statusBar'));
+    app.pip = null;
+    el.pipBtn.setAttribute('aria-pressed', 'false');
+    scrollToBottom();
+  });
+
+  el.pipBtn.setAttribute('aria-pressed', 'true');
+  scrollToBottom();
 }
 
 // ---------------------------------------------------------------- terms
@@ -1809,6 +1869,7 @@ el.startBtn.addEventListener('click', () => {
 
 el.view.addEventListener('change', () => {
   el.body.dataset.view = el.view.value;
+  if (app.pip) app.pip.document.body.dataset.view = el.view.value;
   localStorage.setItem('lc.view', el.view.value);
   if (el.view.value !== 'list') el.stage.scrollTop = el.stage.scrollHeight;
   updateJumpButton();
@@ -1829,6 +1890,12 @@ el.gate.addEventListener('input', applyGate);
 
 el.stage.addEventListener('scroll', updateJumpButton, { passive: true });
 el.jumpBtn.addEventListener('click', jumpToLatest);
+
+el.pipBtn.hidden = !pipSupported();
+el.pipBtn.addEventListener('click', () => {
+  if (app.pip) app.pip.close();
+  else void openPip().catch((err) => setError(`浮窗打开失败：${err.message}`));
+});
 
 el.lockBtn.addEventListener('click', () => setLocked(!app.locked, { scroll: true }));
 
@@ -1914,8 +1981,14 @@ el.noticeDismiss.addEventListener('click', () => {
 
 // Translation and original are sized independently — set them equal if you want
 // both lines to read with the same weight.
+// The floating window is a separate document with its own root, so anything set
+// as a custom property has to be written to both or the two drift apart.
+function styleRoots() {
+  return [document.documentElement, app.pip?.document.documentElement].filter(Boolean);
+}
+
 function applyFontSize(input, cssVar, storageKey) {
-  document.documentElement.style.setProperty(cssVar, `${input.value}px`);
+  for (const root of styleRoots()) root.style.setProperty(cssVar, `${input.value}px`);
   localStorage.setItem(storageKey, input.value);
 }
 
@@ -1935,7 +2008,7 @@ const systemPrefersDark = matchMedia('(prefers-color-scheme: dark)');
 
 function applyTheme(id) {
   const dark = id === 'system' ? systemPrefersDark.matches : id === 'dark';
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  for (const root of styleRoots()) root.dataset.theme = dark ? 'dark' : 'light';
 
   const theme = THEMES.find((t) => t.id === id) || THEMES[0];
   el.themeBtn.textContent = theme.icon;
