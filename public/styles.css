@@ -680,3 +680,17 @@ body.theater.peek #controls {
   z-index: 35;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
+
+/* ---------------------------------------------------------------- button labels */
+
+/* Icons alone are a guessing game for anyone who has not used the app before,
+   and a tooltip only helps after you already hovered the right thing. */
+.ghost .lbl {
+  margin-left: 5px;
+  font-size: 12px;
+}
+
+/* Below this the toolbar needs the room more than the words. */
+@media (max-width: 1100px) {
+  .ghost .lbl { display: none; }
+}

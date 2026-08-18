@@ -131,6 +131,8 @@ const el = {
   pipBtn: $('pipBtn'),
   lockBtn: $('lockBtn'),
   themeBtn: $('themeBtn'),
+  themeIcon: $('themeIcon'),
+  themeLabel: $('themeLabel'),
   timestampsBtn: $('timestampsBtn'),
   theaterBtn: $('theaterBtn'),
   theaterExit: $('theaterExit'),
@@ -2001,9 +2003,9 @@ el.fontSize.addEventListener('input', () =>
 
 // 跟随系统 → 亮色 → 暗色 → 跟随系统
 const THEMES = [
-  { id: 'system', icon: '🖥', label: '跟随系统' },
-  { id: 'light', icon: '☀️', label: '亮色' },
-  { id: 'dark', icon: '🌙', label: '暗色' },
+  { id: 'system', icon: '🖥', label: '跟随系统', short: '系统' },
+  { id: 'light', icon: '☀️', label: '亮色', short: '亮色' },
+  { id: 'dark', icon: '🌙', label: '暗色', short: '暗色' },
 ];
 const systemPrefersDark = matchMedia('(prefers-color-scheme: dark)');
 
@@ -2012,7 +2014,9 @@ function applyTheme(id) {
   for (const root of styleRoots()) root.dataset.theme = dark ? 'dark' : 'light';
 
   const theme = THEMES.find((t) => t.id === id) || THEMES[0];
-  el.themeBtn.textContent = theme.icon;
+  // Writing to the button's textContent would erase the label beside the icon.
+  el.themeIcon.textContent = theme.icon;
+  el.themeLabel.textContent = theme.short;
   el.themeBtn.title = `主题：${theme.label}（点击切换）`;
   localStorage.setItem('lc.theme', id);
 }

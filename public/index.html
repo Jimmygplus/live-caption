@@ -43,7 +43,7 @@
     <select id="sourceLang"></select>
   </div>
 
-  <button id="swapBtn" class="ghost swap" type="button" title="互换源语言与译文">⇄</button>
+  <button id="swapBtn" class="ghost swap" type="button" title="互换源语言与译文">⇄<span class="lbl">互换</span></button>
 
   <div class="field">
     <label for="targetLang" id="targetLabel">译文</label>
@@ -89,23 +89,23 @@
 
   <div class="tools">
     <div class="field compact">
-      <label for="origFontSize" title="原文字号">原</label>
+      <label for="origFontSize" title="原文字号">原文</label>
       <input id="origFontSize" type="range" min="16" max="96" step="2" value="42" />
     </div>
 
     <div class="field compact">
-      <label for="fontSize" title="译文字号">译</label>
+      <label for="fontSize" title="译文字号">译文</label>
       <input id="fontSize" type="range" min="16" max="96" step="2" value="34" />
     </div>
 
-    <button id="pipBtn" class="ghost" type="button" hidden title="浮窗字幕：独立小窗口，置顶在其他应用之上">⧉</button>
-    <button id="lockBtn" class="ghost" type="button" aria-pressed="true" title="锁定最新：始终停在最新字幕">📌</button>
-    <button id="themeBtn" class="ghost" type="button" title="主题：跟随系统 / 亮色 / 暗色">🖥</button>
-    <button id="timestampsBtn" class="ghost" type="button" aria-pressed="false" title="显示/隐藏时间戳">🕑</button>
-    <button id="theaterBtn" class="ghost" type="button" aria-pressed="false" title="剧场模式（隐藏控件，Esc 退出）">⛶</button>
+    <button id="pipBtn" class="ghost" type="button" hidden title="浮窗字幕：独立小窗口，置顶在其他应用之上">⧉<span class="lbl">浮窗</span></button>
+    <button id="lockBtn" class="ghost" type="button" aria-pressed="true" title="锁定最新：始终停在最新字幕，向上滚动自动解锁">📌<span class="lbl">锁定</span></button>
+    <button id="themeBtn" class="ghost" type="button" title="主题：跟随系统 / 亮色 / 暗色"><span id="themeIcon">🖥</span><span class="lbl" id="themeLabel">系统</span></button>
+    <button id="timestampsBtn" class="ghost" type="button" aria-pressed="false" title="显示/隐藏时间戳与发言人">🕑<span class="lbl">时间</span></button>
+    <button id="theaterBtn" class="ghost" type="button" aria-pressed="false" title="全屏 + 剧场模式：只留字幕（Esc 退出）">⛶<span class="lbl">全屏</span></button>
 
     <details class="menu" id="exportMenu">
-      <summary class="ghost" title="导出记录">⬇</summary>
+      <summary class="ghost" title="导出记录与会前自检">⬇<span class="lbl">导出</span></summary>
       <div class="menu-items">
         <button type="button" data-export="selftest">会前自检</button>
         <button type="button" data-export="copy">复制全文</button>
