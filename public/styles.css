@@ -694,3 +694,130 @@ body.theater.peek #controls {
 @media (max-width: 1100px) {
   .ghost .lbl { display: none; }
 }
+
+/* ---------------------------------------------------------------- phone layout */
+
+/* Ten controls and the captions cannot share a phone screen. Below the
+   breakpoint the toolbar becomes a bottom sheet, the captions take everything
+   else, and the start button sits where a thumb already rests. */
+
+body.phone {
+  /* dvh follows the browser chrome as it hides, which vh does not. */
+  height: 100dvh;
+  grid-template-rows: 1fr auto auto;
+}
+
+/* --- the toolbar, now a sheet --- */
+
+body.phone #controls {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  max-height: 78dvh;
+  overflow-y: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+  transform: translateY(101%);
+  transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+body.phone.sheet-open #controls { transform: none; }
+
+/* A grab handle, so the panel reads as something that slides away. */
+body.phone #controls::before {
+  content: '';
+  align-self: center;
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  flex: none;
+}
+
+body.phone .brand { display: none; }
+body.phone .spacer { display: none; }
+
+/* Full-width rows: a label above its control reads far better than a cramped
+   grid, and every target clears the 44px touch minimum. */
+body.phone #controls .field { width: 100%; max-width: none; }
+body.phone #controls select { width: 100%; padding: 11px 12px; font-size: 15px; }
+body.phone #controls .field label { font-size: 11px; }
+
+body.phone .tools {
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-left: 0;
+  width: 100%;
+}
+body.phone .tools .ghost { flex: 1 1 auto; justify-content: center; padding: 11px 10px; }
+body.phone .tools .lbl { display: inline; }
+body.phone .field.compact { flex: 1 1 130px; }
+body.phone .field.compact input[type="range"] { flex: 1; width: auto; }
+
+body.phone #swapBtn { align-self: stretch; padding: 11px; }
+body.phone .menu { flex: 1 1 auto; }
+body.phone .menu summary { width: 100%; justify-content: center; padding: 11px 10px; }
+body.phone .menu-items { right: auto; left: 0; bottom: calc(100% + 6px); top: auto; }
+
+/* --- thumb bar --- */
+
+.mobile-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  background: var(--bg-bar);
+  border-top: 1px solid var(--border);
+  z-index: 50;
+}
+.mobile-bar[hidden] { display: none; }
+
+.mobile-bar #sheetBtn { flex: 0 0 auto; padding: 13px 18px; font-size: 15px; }
+.mobile-bar #startBtn { flex: 1; padding: 13px; font-size: 16px; align-self: auto; }
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.45);
+}
+.scrim[hidden] { display: none; }
+
+/* --- captions --- */
+
+body.phone main#stage { padding: 14px 16px 24vh; }
+
+/* Desktop defaults are sized for a room; a phone is read at arm's length. */
+body.phone {
+  --original-size: 26px;
+  --translation-size: 21px;
+}
+
+body.phone .segment { margin-bottom: 16px; }
+body.phone .segment[data-speaker] { padding-left: 10px; border-left-width: 2px; }
+
+/* The status bar keeps only what is glanceable while speaking. */
+body.phone #statusBar { padding: 7px 14px; font-size: 12px; gap: 9px; }
+body.phone #statusBar .gate,
+body.phone #statusBar #counter { display: none; }
+body.phone .meter { width: 48px; }
+
+body.phone .jump { bottom: calc(76px + env(safe-area-inset-bottom)); }
+body.phone #theaterExit { top: 10px; right: 10px; }
+body.phone .notice { margin-bottom: 16px; font-size: 13px; }
+
+/* Dialogs are near-fullscreen sheets rather than floating cards. */
+body.phone .terms, .phone-dialog {
+  width: 100vw;
+  max-width: 100vw;
+  max-height: 92dvh;
+  margin: auto 0 0;
+  border-radius: 16px 16px 0 0;
+}

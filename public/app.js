@@ -137,6 +137,10 @@ const el = {
   theaterBtn: $('theaterBtn'),
   theaterExit: $('theaterExit'),
   exportMenu: $('exportMenu'),
+  controls: $('controls'),
+  mobileBar: $('mobileBar'),
+  sheetBtn: $('sheetBtn'),
+  sheetScrim: $('sheetScrim'),
   stage: $('stage'),
   captions: $('captions'),
   live: $('live'),
@@ -571,6 +575,39 @@ function offerRestore() {
     () => restoreTranscript(data),
   );
 }
+
+// ---------------------------------------------------------------- phone layout
+//
+// A phone cannot show ten controls and the captions at once. Below the
+// breakpoint the toolbar becomes a bottom sheet and the captions take the whole
+// screen; the start button moves down to the thumb bar rather than being
+// duplicated, so there is never a second copy to keep in sync.
+
+const phoneQuery = matchMedia('(max-width: 820px)');
+
+function applyLayout() {
+  const phone = phoneQuery.matches;
+  el.body.classList.toggle('phone', phone);
+  el.mobileBar.hidden = !phone;
+
+  if (phone) el.mobileBar.append(el.startBtn);
+  else el.termsBtn.after(el.startBtn);
+
+  if (!phone) closeSheet();
+}
+
+function openSheet() {
+  el.body.classList.add('sheet-open');
+  el.sheetScrim.hidden = false;
+}
+
+function closeSheet() {
+  el.body.classList.remove('sheet-open');
+  el.sheetScrim.hidden = true;
+}
+
+const toggleSheet = () =>
+  (el.body.classList.contains('sheet-open') ? closeSheet() : openSheet());
 
 // ---------------------------------------------------------------- floating window
 //
@@ -1907,6 +1944,15 @@ el.gate.addEventListener('input', applyGate);
 el.stage.addEventListener('scroll', updateJumpButton, { passive: true });
 el.jumpBtn.addEventListener('click', jumpToLatest);
 
+el.sheetBtn.addEventListener('click', toggleSheet);
+el.sheetScrim.addEventListener('click', closeSheet);
+phoneQuery.addEventListener('change', applyLayout);
+
+// Starting or stopping is the one action worth closing the sheet for.
+el.startBtn.addEventListener('click', () => {
+  if (el.body.classList.contains('phone')) closeSheet();
+});
+
 el.pipBtn.hidden = !pipSupported();
 el.pipBtn.addEventListener('click', () => {
   if (app.pip) app.pip.close();
@@ -2176,6 +2222,7 @@ for (const [input, cssVar, key] of [
 
 applyTheme(localStorage.getItem('lc.theme') || 'system');
 
+applyLayout();
 setLocked(localStorage.getItem('lc.locked') !== '0');
 el.length.value = localStorage.getItem('lc.length') || 'medium';
 el.gate.value = localStorage.getItem('lc.gate') || '0';
