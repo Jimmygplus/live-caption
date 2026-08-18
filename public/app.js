@@ -133,6 +133,7 @@ const el = {
   themeBtn: $('themeBtn'),
   timestampsBtn: $('timestampsBtn'),
   theaterBtn: $('theaterBtn'),
+  theaterExit: $('theaterExit'),
   exportMenu: $('exportMenu'),
   stage: $('stage'),
   captions: $('captions'),
@@ -2058,7 +2059,12 @@ async function exitFullscreen() {
 
 function setTheater(on) {
   el.body.classList.toggle('theater', on);
+  el.body.classList.remove('peek');
   el.theaterBtn.setAttribute('aria-pressed', String(on));
+  // Theater hides the toolbar, and the exit button lives in it. Without a
+  // separate way out, anything that stops fullscreenchange from firing leaves
+  // the page with no visible escape at all.
+  el.theaterExit.hidden = !on;
 }
 
 el.theaterBtn.addEventListener('click', async () => {
@@ -2079,10 +2085,24 @@ for (const event of ['fullscreenchange', 'webkitfullscreenchange']) {
   });
 }
 
+// Unconditional: the previous version only acted when already out of fullscreen,
+// so if the fullscreen state and the theater class ever disagreed, Esc did nothing.
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && el.body.classList.contains('theater') && !isFullscreen()) {
-    setTheater(false);
-  }
+  if (event.key !== 'Escape' || !el.body.classList.contains('theater')) return;
+  void exitFullscreen();
+  setTheater(false);
+});
+
+el.theaterExit.addEventListener('click', () => {
+  void exitFullscreen();
+  setTheater(false);
+});
+
+// Pointer near the top edge slides the toolbar back in — the video-player
+// convention, and it depends on no event other than mouse movement.
+document.addEventListener('mousemove', (event) => {
+  if (!el.body.classList.contains('theater')) return;
+  el.body.classList.toggle('peek', event.clientY < 64);
 });
 
 el.exportMenu.addEventListener('click', (event) => {
