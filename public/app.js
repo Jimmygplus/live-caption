@@ -184,6 +184,7 @@ const app = {
   rawLog: [],             // rolling raw Soniox messages, for after-the-fact diagnosis
   mode: 'server',         // 'server' (local proxy) or 'byok' (static, user's keys)
   pip: null,              // the floating caption window, when open
+  touchStartY: 0,         // where a touch drag began, to tell scroll direction
   locked: true,           // pin the view to the newest caption
 };
 
@@ -438,8 +439,16 @@ function usesExternalTranslator() {
 
 // Soniox streams translation tokens behind the originals, so segmentation has to
 // wait for them. External providers translate after the cut, so it can be tight.
+// Soniox streams the translation behind the original and gives no way to tell
+// which original a translation token belongs to — the only thing keeping them
+// together is that they land inside the same segment. Cutting on clause marks
+// makes segments shorter than that lag, so a translation ends up attached to the
+// caption before its own. Inline translation therefore only cuts where a real
+// pause makes the lag likely to have cleared.
+const usesInlineTranslation = () => el.translator.value === 'soniox';
+
 function cutGraceMs() {
-  return el.translator.value === 'soniox' ? 700 : 150;
+  return usesInlineTranslation() ? 700 : 150;
 }
 
 // In two-way mode the target is whichever of the two configured languages was
@@ -1075,10 +1084,15 @@ function maybeCut({ force = false } = {}) {
   const { soft, hard } = lengthPreset();
   const width = textWidth(text);
 
-  // Over the hard limit: break immediately at the best boundary available. No
-  // grace window — the caption is already too long to keep buffering.
-  if (width >= hard) {
-    commitSegment(bestBreakPoint(text, hard));
+  const inline = usesInlineTranslation();
+  // Inline translation needs room for the lag, so its ceiling is far higher and
+  // exists only to stop an unbroken monologue from growing without limit.
+  const ceiling = inline ? Math.max(hard * 3, 120) : hard;
+
+  // Over the ceiling: break immediately at the best boundary available. No grace
+  // window — the caption is already too long to keep buffering.
+  if (width >= ceiling) {
+    commitSegment(bestBreakPoint(text, ceiling));
     return;
   }
 
@@ -1088,9 +1102,8 @@ function maybeCut({ force = false } = {}) {
     return;
   }
 
-  // A clause mark ends it only once the line can stand on its own, otherwise
-  // every "那个，" would become its own caption.
-  if (width >= soft && CLAUSE_END.test(text)) {
+  // Clause marks are cut points only when something else does the translating.
+  if (!inline && width >= soft && CLAUSE_END.test(text)) {
     schedulePendingCut(text.length);
   }
 }
@@ -1904,15 +1917,36 @@ el.lockBtn.addEventListener('click', () => setLocked(!app.locked, { scroll: true
 
 // Release the lock only on a real gesture. Listening for plain scroll events
 // would also catch our own programmatic snap-to-bottom and unlock immediately.
-for (const evt of ['wheel', 'touchmove']) {
-  el.stage.addEventListener(
-    evt,
-    () => {
-      if (app.locked && !isFollowing()) setLocked(false);
-    },
-    { passive: true },
-  );
-}
+// Any deliberate scroll up releases the lock immediately. The previous version
+// waited until the view was already far from the bottom — impossible to reach,
+// because each incoming caption snapped it back before the gesture could move it.
+el.stage.addEventListener(
+  'wheel',
+  (event) => {
+    if (app.locked && event.deltaY < 0) setLocked(false);
+  },
+  { passive: true },
+);
+
+el.stage.addEventListener(
+  'touchstart',
+  (event) => { app.touchStartY = event.touches[0]?.clientY ?? 0; },
+  { passive: true },
+);
+
+el.stage.addEventListener(
+  'touchmove',
+  (event) => {
+    const y = event.touches[0]?.clientY ?? 0;
+    if (app.locked && y > app.touchStartY + 8) setLocked(false); // dragging down = scrolling up
+  },
+  { passive: true },
+);
+
+// Keyboard scrolling counts as intent too.
+el.stage.addEventListener('keydown', (event) => {
+  if (app.locked && ['PageUp', 'Home', 'ArrowUp'].includes(event.key)) setLocked(false);
+});
 
 el.keysBtn.addEventListener('click', () => {
   el.keySoniox.value = keys.soniox;
