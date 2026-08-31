@@ -41,8 +41,8 @@ form {
   border-radius: 16px;
 }
 label { font-weight: 650; margin-top: 8px; }
-input, textarea, button { font: inherit; }
-input, textarea {
+input, textarea, select, button { font: inherit; }
+input, textarea, select {
   width: 100%;
   padding: 13px 14px;
   border: 1px solid var(--border);
@@ -52,7 +52,7 @@ input, textarea {
   font-size: 17px;
 }
 textarea { resize: vertical; line-height: 1.55; min-height: 160px; }
-input:focus, textarea:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+input:focus, textarea:focus, select:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 .between { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
 button {
   margin-top: 12px;

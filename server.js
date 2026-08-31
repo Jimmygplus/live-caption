@@ -142,6 +142,7 @@ async function handleConfig(res) {
     },
     audienceInput: {
       enabled: true,
+      transport: 'polling',
       // Set PUBLIC_URL in production when the externally reachable origin differs
       // from what the host browser sees (for example behind a reverse proxy).
       publicUrl: String(process.env.PUBLIC_URL || '').replace(/\/$/, ''),
@@ -169,6 +170,7 @@ async function handleCreateAudienceSession(req, res) {
     expiresAt: now + AUDIENCE_SESSION_TTL_MS,
     nextSeq: 1,
     messages: [],
+    messageIds: new Map(),
     rate: new Map(),
     closed: false,
   };
@@ -210,9 +212,16 @@ async function handleAudienceMessage(req, res, session) {
   const clientId = typeof body.clientId === 'string'
     ? body.clientId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
     : '';
+  const messageId = typeof body.messageId === 'string'
+    ? body.messageId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)
+    : '';
+  const language = ['auto', 'zh', 'en'].includes(body.language) ? body.language : 'auto';
   if (!text) return sendJSON(res, 400, { error: '请输入要表达的内容。' });
   if (text.length > AUDIENCE_MAX_TEXT) {
     return sendJSON(res, 400, { error: `每条消息最多 ${AUDIENCE_MAX_TEXT} 个字符。` });
+  }
+  if (messageId && session.messageIds.has(messageId)) {
+    return sendJSON(res, 202, { ok: true, seq: session.messageIds.get(messageId), duplicate: true });
   }
 
   // A shared QR token is expected; rate-limit each browser identity rather than
@@ -243,10 +252,16 @@ async function handleAudienceMessage(req, res, session) {
     text,
     name: name || '现场参与者',
     clientId,
+    messageId,
+    language,
     at: now,
   };
   session.messages.push(message);
-  if (session.messages.length > AUDIENCE_MAX_MESSAGES) session.messages.shift();
+  if (messageId) session.messageIds.set(messageId, message.seq);
+  if (session.messages.length > AUDIENCE_MAX_MESSAGES) {
+    const removed = session.messages.shift();
+    if (removed.messageId) session.messageIds.delete(removed.messageId);
+  }
   sendJSON(res, 202, { ok: true, seq: message.seq });
 }
 

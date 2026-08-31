@@ -29,7 +29,7 @@
 | Anthropic（翻译） | ✅ | `access-control-allow-origin: *`，并提供 `anthropic-dangerous-direct-browser-access` 头 |
 | 腾讯 TMT / 混元 | ❌ | 完全不返回 CORS 头，浏览器会拦掉响应 |
 
-所以腾讯只能在服务器模式下使用。扫码文字发言同样需要服务器维护临时消息队列，纯静态部署会明确显示为不可用。
+所以腾讯只能在服务器模式下使用。扫码文字发言在静态部署中通过独立的临时加密中继同步；本地 Node 模式仍使用进程内房间。
 
 > **关于密钥安全**：Soniox 和 Anthropic 的密钥都是单一服务、可计量、可随时吊销的。腾讯给的是 `AKID...` 账号级凭证，能操作该账号下几乎所有云服务 —— **不要把它填进任何网页**，包括本项目的静态版（静态版也根本不提供这个选项）。
 
@@ -59,6 +59,18 @@ PUBLIC_URL=https://caption.example.com node server.js
 这个入口面向**失语者、失聪及听障人士**（**non-speaking, Deaf, and hard-of-hearing people**），让无法或不便通过语音参与的人把想表达的内容直接送到现场字幕。
 
 主持端点击「扫码发言」创建一个 6 小时有效的临时房间。参与者扫码后可填写显示名称和最多 500 字的内容，发送后会作为带 `⌨` 标识的段落进入同一字幕列表、滚动、恢复与导出流程。
+
+GitHub Pages 静态版本使用 `relay/` 下的 Cloudflare Durable Object：手机在本机用 AES-GCM 加密文字，中继只保存密文；主持端解密并显示后返回端到端确认。房间凭证只放在二维码 URL fragment，读取后会从手机地址栏移除。参与者刷新页面时，尚未确认的消息会从当前标签页的 `sessionStorage` 恢复并按同一 `messageId` 重试，因此不会重复显示。
+
+部署中继：
+
+```bash
+nvm use
+npx wrangler login
+npx wrangler deploy --config relay/wrangler.jsonc
+```
+
+部署完成后，将 Worker 地址写入 `public/relay-config.js` 的 `AUDIENCE_RELAY_URL`。Durable Object 使用 SQLite storage 和可休眠 WebSocket；房间 6 小时后由 alarm 清除。
 
 - 房间只存在当前 Node 进程内，不落盘；重启或点击「结束文字输入」后立即失效。
 - 主持端和参与端使用不同的随机凭证；二维码不能读取字幕、密钥或主持端配置。
@@ -257,10 +269,12 @@ brew install blackhole-2ch
    │
    └── POST ./api/token ──→ 本地 server.js ──→ Soniox REST（换 60 秒临时 key）
 
-手机 input.html ── POST 文字 ──→ 临时内存房间 ── 主持端轮询 ──→ 同一字幕列表
+手机 input.html ── AES-GCM 密文 ──→ 临时中继 ── WebSocket ──→ 主持端解密、显示、ACK
+                                     │
+本地 Node 模式 ── POST 文字 ──→ 进程内临时房间 ── 主持端轮询 ──┘
 ```
 
-`server.js` 保持零依赖：发静态文件、签发临时 key、代理翻译，并维护扫码输入的短期内存房间。长期 key 永远不进浏览器，文字房间也接触不到厂商密钥。
+`server.js` 保持零依赖：发静态文件、签发临时 key、代理翻译，并维护本地扫码输入的短期内存房间。静态站的中继独立部署，只接触随机房间标识、密文和递增序号；两种模式都不会接触厂商密钥。
 
 **静态模式下整条虚线都不存在** —— 浏览器拿用户自己的长期 key 直接建 WebSocket，翻译也直接打 Anthropic。启动时探测 `./api/config`，404 就自动切到这个模式，同一份代码。
 

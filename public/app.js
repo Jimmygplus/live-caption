@@ -9,6 +9,13 @@
 //               are translated through /api/translate.
 
 import { qrDataUrl } from './qr.js';
+import {
+  decryptAudiencePayload,
+  detectTypedLanguage,
+  hashAudienceToken,
+  randomAudienceSecret,
+} from './audience-crypto.js';
+import { AUDIENCE_RELAY_URL } from './relay-config.js';
 
 const SONIOX_WS = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = 'stt-rt-v5';
@@ -128,6 +135,7 @@ const el = {
   audienceUrl: $('audienceUrl'),
   audienceCopy: $('audienceCopy'),
   audienceHint: $('audienceHint'),
+  audiencePrivacy: $('audiencePrivacy'),
   audienceEnd: $('audienceEnd'),
   jumpBtn: $('jumpBtn'),
   jumpLabel: $('jumpLabel'),
@@ -177,7 +185,7 @@ const app = {
   config: {
     engines: { soniox: false, webspeech: true },
     translation: { providers: [], default: 'none' },
-    audienceInput: { enabled: false, publicUrl: '' },
+    audienceInput: { enabled: false, transport: '', publicUrl: '', relayUrl: '' },
   },
   running: false,
   engine: 'soniox',
@@ -273,7 +281,12 @@ function localConfig() {
   return {
     engines: { soniox: Boolean(keys.soniox), webspeech: true },
     translation: { providers, default: keys.anthropic ? 'claude' : 'soniox' },
-    audienceInput: { enabled: false, publicUrl: '' },
+    audienceInput: {
+      enabled: Boolean(AUDIENCE_RELAY_URL),
+      transport: 'relay',
+      publicUrl: '',
+      relayUrl: AUDIENCE_RELAY_URL,
+    },
   };
 }
 
@@ -404,15 +417,17 @@ async function loadConfig() {
 
 // ---------------------------------------------------------------- audience text input
 //
-// The QR page and this host page share no vendor credentials. They exchange only
-// short text messages through an expiring in-memory room on our own Node server.
+// The QR page and this host page share no vendor credentials. Server mode uses
+// a local in-memory room; the static deployment uses an expiring encrypted relay.
 
 function audienceJoinUrl(session) {
-  const configured = app.config.audienceInput?.publicUrl;
+  const configured = session.transport === 'relay' ? '' : app.config.audienceInput?.publicUrl;
   const page = configured
     ? new URL('input.html', `${configured.replace(/\/$/, '')}/`)
     : new URL('./input.html', location.href);
-  page.hash = new URLSearchParams({ r: session.id, t: session.joinToken }).toString();
+  page.hash = new URLSearchParams(session.transport === 'relay'
+    ? { r: session.id, s: session.joinSecret }
+    : { r: session.id, t: session.joinToken }).toString();
   return page.href;
 }
 
@@ -435,10 +450,18 @@ function showAudienceSession(session) {
   try {
     el.audienceQr.src = qrDataUrl(joinUrl);
     el.audienceQr.hidden = false;
-    el.audienceHint.textContent = localOnlyUrl(joinUrl)
+    el.audienceHint.textContent = session.transport === 'relay'
+      ? '端到端加密通道已连接；让参与者用手机相机扫码，同一个二维码可供多人使用。'
+      : localOnlyUrl(joinUrl)
       ? '当前链接是 localhost，手机无法访问。请用局域网 IP 打开主持端，或在服务端设置 PUBLIC_URL 后重新创建。'
       : '让参与者用手机相机扫码；同一个二维码可供多人使用。';
-    el.audienceHint.classList.toggle('warn', localOnlyUrl(joinUrl));
+    el.audienceHint.classList.toggle(
+      'warn',
+      session.transport !== 'relay' && localOnlyUrl(joinUrl),
+    );
+    el.audiencePrivacy.textContent = session.transport === 'relay'
+      ? '文字在手机端加密，中继只暂存密文；会话 6 小时自动失效，结束后二维码立即作废。'
+      : '会话只保存在当前服务进程内，6 小时自动失效；结束后二维码立即作废。';
   } catch (error) {
     el.audienceQr.hidden = true;
     el.audienceHint.textContent = error.message;
@@ -462,10 +485,102 @@ function receiveAudienceMessage(message, session) {
     source: 'typed',
     author: message.name,
   });
-  void queueTranslation(segment, message.text, null);
+  const detectedLanguage = message.language === 'auto'
+    ? detectTypedLanguage(message.text)
+    : message.language || null;
+  void queueTranslation(segment, message.text, detectedLanguage);
   session.received += 1;
   el.audienceHint.textContent = `已收到 ${session.received} 条文字发言；二维码仍可继续使用。`;
   el.audienceHint.classList.remove('warn');
+}
+
+function relayWebSocketUrl(session) {
+  const url = new URL(`/v1/rooms/${encodeURIComponent(session.id)}/ws`, session.relayUrl);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.href;
+}
+
+function scheduleRelayReconnect(session) {
+  if (app.audience !== session || session.closed) return;
+  session.failures += 1;
+  const delay = Math.min(10_000, 500 * 2 ** session.failures);
+  if (session.failures === 1) setError('扫码文字输入暂时断开，正在自动重连。');
+  session.reconnectTimer = setTimeout(() => {
+    void connectRelayHost(session, true).catch(() => scheduleRelayReconnect(session));
+  }, delay);
+}
+
+function connectRelayHost(session, initial = false) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const socket = new WebSocket(relayWebSocketUrl(session));
+    session.socket = socket;
+    const timeout = setTimeout(() => {
+      if (!settled) reject(new Error('安全通道连接超时。'));
+      socket.close();
+    }, 10_000);
+
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ type: 'auth', role: 'host', tokenHash: session.hostTokenHash }));
+    });
+    socket.addEventListener('message', (event) => {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'ready') {
+        clearTimeout(timeout);
+        session.failures = 0;
+        if (el.errorText.textContent.startsWith('扫码文字输入暂时断开')) setError('');
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      } else if (message.type === 'message') {
+        session.messageChain = session.messageChain.then(async () => {
+          try {
+            const payload = await decryptAudiencePayload(
+              session.joinSecret,
+              message.messageId,
+              message,
+            );
+            if (session.seen.has(message.messageId)) {
+              socket.send(JSON.stringify({ type: 'ack', messageId: message.messageId }));
+              return;
+            }
+            const text = typeof payload.text === 'string' ? payload.text.trim().slice(0, 500) : '';
+            const name = typeof payload.name === 'string' ? payload.name.trim().slice(0, 30) : '';
+            const language = ['auto', 'zh', 'en'].includes(payload.language)
+              ? payload.language
+              : 'auto';
+            if (!text) {
+              socket.send(JSON.stringify({ type: 'ack', messageId: message.messageId }));
+              return;
+            }
+            session.seen.add(message.messageId);
+            receiveAudienceMessage({ text, name, language, seq: message.seq, at: message.at }, session);
+            socket.send(JSON.stringify({ type: 'ack', messageId: message.messageId }));
+          } catch {
+            setError('收到一条无法解密的文字消息，已忽略。');
+          }
+        });
+      } else if (message.type === 'closed') {
+        session.closed = true;
+        el.audienceBtn.classList.remove('active');
+        el.audienceEnd.hidden = true;
+        el.audienceHint.textContent = '文字输入会话已结束，请重新创建二维码。';
+        el.audienceHint.classList.add('warn');
+      }
+    });
+    socket.addEventListener('close', () => {
+      clearTimeout(timeout);
+      if (!settled && initial) {
+        settled = true;
+        reject(new Error('无法连接文字同步服务。'));
+      } else if (!session.closed && app.audience === session) {
+        scheduleRelayReconnect(session);
+      }
+    });
+    socket.addEventListener('error', () => socket.close());
+  });
 }
 
 async function pollAudienceMessages(session) {
@@ -509,11 +624,47 @@ async function createAudienceSession() {
   el.audienceEnd.hidden = true;
 
   if (!app.config.audienceInput?.enabled) {
-    el.audienceLoading.textContent = '扫码文字输入需要 Node 服务模式；当前纯静态部署暂不支持跨设备消息同步。';
+    el.audienceLoading.textContent = '扫码文字输入需要跨设备同步通道；当前部署尚未配置。';
     return;
   }
 
   try {
+    if (app.config.audienceInput.transport === 'relay') {
+      const relayUrl = app.config.audienceInput.relayUrl;
+      const hostToken = randomAudienceSecret();
+      const joinSecret = randomAudienceSecret();
+      const hostTokenHash = await hashAudienceToken(hostToken);
+      const response = await fetch(`${relayUrl.replace(/\/$/, '')}/v1/rooms`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          hostHash: hostTokenHash,
+          joinHash: await hashAudienceToken(joinSecret),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `创建失败（${response.status}）`);
+      const session = {
+        ...body,
+        hostTokenHash,
+        joinSecret,
+        relayUrl,
+        transport: 'relay',
+        createdAt: Date.now(),
+        received: 0,
+        failures: 0,
+        reconnectTimer: null,
+        messageChain: Promise.resolve(),
+        seen: new Set(),
+        socket: null,
+        closed: false,
+      };
+      app.audience = session;
+      await connectRelayHost(session, true);
+      showAudienceSession(session);
+      return;
+    }
+
     const response = await fetch('./api/audience/sessions', {
       method: 'POST',
       headers: { 'x-live-caption-client': 'host' },
@@ -522,6 +673,7 @@ async function createAudienceSession() {
     if (!response.ok) throw new Error(body.error || `创建失败（${response.status}）`);
     const session = {
       ...body,
+      transport: 'polling',
       createdAt: Date.now(),
       lastSeq: 0,
       received: 0,
@@ -533,6 +685,11 @@ async function createAudienceSession() {
     showAudienceSession(session);
     void pollAudienceMessages(session);
   } catch (error) {
+    if (app.audience?.transport === 'relay') {
+      app.audience.closed = true;
+      app.audience.socket?.close();
+      app.audience = null;
+    }
     el.audienceLoading.textContent = `无法创建文字输入会话：${error.message}`;
   }
 }
@@ -542,12 +699,20 @@ async function endAudienceSession() {
   if (!session) return;
   session.closed = true;
   clearTimeout(session.pollTimer);
+  clearTimeout(session.reconnectTimer);
   app.audience = null;
   el.audienceBtn.classList.remove('active');
   el.audienceSession.hidden = true;
   el.audienceEnd.hidden = true;
   el.audienceLoading.hidden = false;
   el.audienceLoading.textContent = '文字输入会话已结束，旧二维码已经失效。';
+  if (session.transport === 'relay') {
+    if (session.socket?.readyState === WebSocket.OPEN) {
+      session.socket.send(JSON.stringify({ type: 'close-room' }));
+      session.socket.close();
+    }
+    return;
+  }
   try {
     await fetch(`./api/audience/sessions/${encodeURIComponent(session.id)}`, {
       method: 'DELETE',

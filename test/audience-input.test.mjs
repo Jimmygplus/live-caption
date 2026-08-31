@@ -1,8 +1,50 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { webcrypto } from 'node:crypto';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { qrSvg } from '../public/qr.js';
+import {
+  decryptAudiencePayload,
+  detectTypedLanguage,
+  encryptAudiencePayload,
+  hashAudienceToken,
+  randomAudienceSecret,
+} from '../public/audience-crypto.js';
+import { AudienceRoom } from '../relay/src/index.js';
+
+globalThis.crypto ||= webcrypto;
+
+class MemoryStorage {
+  constructor() { this.values = new Map(); }
+  async get(key) { return this.values.get(key); }
+  async put(key, value) {
+    if (typeof key === 'object') {
+      for (const [entryKey, entryValue] of Object.entries(key)) this.values.set(entryKey, entryValue);
+    } else {
+      this.values.set(key, value);
+    }
+  }
+  async delete(keys) {
+    for (const key of Array.isArray(keys) ? keys : [keys]) this.values.delete(key);
+  }
+  async list({ prefix = '', limit = Infinity } = {}) {
+    return new Map([...this.values]
+      .filter(([key]) => key.startsWith(prefix))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, limit));
+  }
+  async setAlarm(value) { this.alarm = value; }
+  async deleteAll() { this.values.clear(); }
+}
+
+class TestSocket {
+  constructor() { this.messages = []; this.attachment = { authenticated: false }; }
+  serializeAttachment(value) { this.attachment = structuredClone(value); }
+  deserializeAttachment() { return structuredClone(this.attachment); }
+  send(value) { this.messages.push(JSON.parse(value)); }
+  close(code, reason) { this.closed = { code, reason }; }
+}
 
 const port = 52000 + (process.pid % 1000);
 const origin = `http://127.0.0.1:${port}`;
@@ -54,7 +96,13 @@ test('QR audience input moves authenticated messages through the room queue', as
     const sent = await fetch(endpoint, {
       method: 'POST',
       headers: { authorization: `Bearer ${room.joinToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ text: '我想补充一点。', name: '小林', clientId: 'phone-1' }),
+      body: JSON.stringify({
+        text: '我想补充一点。',
+        name: '小林',
+        clientId: 'phone-1',
+        messageId: 'message-00000001',
+        language: 'zh',
+      }),
     });
     assert.equal(sent.status, 202);
 
@@ -63,9 +111,22 @@ test('QR audience input moves authenticated messages through the room queue', as
     });
     assert.equal(received.status, 200);
     const queue = await received.json();
-    assert.deepEqual(queue.messages.map(({ text, name }) => ({ text, name })), [
-      { text: '我想补充一点。', name: '小林' },
+    assert.deepEqual(queue.messages.map(({ text, name, language }) => ({ text, name, language })), [
+      { text: '我想补充一点。', name: '小林', language: 'zh' },
     ]);
+
+    const duplicate = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${room.joinToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: '我想补充一点。',
+        name: '小林',
+        clientId: 'phone-1',
+        messageId: 'message-00000001',
+        language: 'zh',
+      }),
+    }).then((response) => response.json());
+    assert.equal(duplicate.duplicate, true);
 
     const after = await fetch(`${endpoint}?after=${queue.messages[0].seq}`, {
       headers: { authorization: `Bearer ${room.hostToken}` },
@@ -101,4 +162,75 @@ test('local QR encoder returns a complete SVG and rejects oversized links', () =
   assert.match(svg, /viewBox="0 0 45 45"/);
   assert.match(svg, /<path d="M/);
   assert.throws(() => qrSvg(`https://example.com/${'x'.repeat(120)}`), /太长/);
+});
+
+test('audience relay payloads are encrypted, authenticated and language-aware', async () => {
+  const secret = randomAudienceSecret();
+  const messageId = 'message-00000002';
+  const payload = {
+    text: 'I would like to add something.',
+    name: 'Alex',
+    language: 'auto',
+    sentAt: Date.now(),
+  };
+  const encrypted = await encryptAudiencePayload(secret, messageId, payload);
+  assert.ok(!encrypted.ciphertext.includes(payload.text));
+  assert.deepEqual(await decryptAudiencePayload(secret, messageId, encrypted), payload);
+  await assert.rejects(() => decryptAudiencePayload(secret, 'different-message-id', encrypted));
+  assert.match(await hashAudienceToken(secret), /^[0-9a-f]{64}$/);
+  assert.equal(detectTypedLanguage('我想补充一点。'), 'zh');
+  assert.equal(detectTypedLanguage('Could I add something?'), 'en');
+
+  const joinUrl = `https://jimmygplus.github.io/live-caption/input.html#r=ABCDEFGHIJKL&s=${secret}`;
+  assert.match(qrSvg(joinUrl), /^<svg/);
+});
+
+test('relay room authenticates peers, replays ciphertext and acknowledges display', async () => {
+  const hostSecret = randomAudienceSecret();
+  const joinSecret = randomAudienceSecret();
+  const sockets = [new TestSocket(), new TestSocket()];
+  const state = {
+    storage: new MemoryStorage(),
+    getWebSockets: () => sockets,
+  };
+  const relayRoom = new AudienceRoom(state);
+  const initialized = await relayRoom.fetch(new Request('https://audience-room/internal/init', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: 'ABCDEFGHIJKL',
+      hostHash: await hashAudienceToken(hostSecret),
+      joinHash: await hashAudienceToken(joinSecret),
+      expiresAt: Date.now() + 60_000,
+    }),
+  }));
+  assert.equal(initialized.status, 204);
+
+  const [host, participant] = sockets;
+  await relayRoom.webSocketMessage(host, JSON.stringify({
+    type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
+  }));
+  await relayRoom.webSocketMessage(participant, JSON.stringify({
+    type: 'auth', role: 'participant', tokenHash: await hashAudienceToken(joinSecret), clientId: 'phone-1',
+  }));
+  assert.equal(host.messages[0].type, 'ready');
+  assert.equal(participant.messages[0].type, 'ready');
+
+  const messageId = 'message-00000003';
+  const encrypted = await encryptAudiencePayload(joinSecret, messageId, {
+    text: 'Please show this.', name: 'Sam', language: 'en', sentAt: Date.now(),
+  });
+  await relayRoom.webSocketMessage(participant, JSON.stringify({
+    type: 'message', messageId, ...encrypted,
+  }));
+  assert.equal(participant.messages.at(-1).type, 'queued');
+  assert.equal(host.messages.at(-1).type, 'message');
+  assert.equal(host.messages.at(-1).ciphertext, encrypted.ciphertext);
+
+  await relayRoom.webSocketMessage(host, JSON.stringify({ type: 'ack', messageId }));
+  assert.equal(participant.messages.at(-1).type, 'displayed');
+
+  await relayRoom.webSocketMessage(participant, JSON.stringify({
+    type: 'message', messageId, ...encrypted,
+  }));
+  assert.equal(participant.messages.at(-1).type, 'displayed');
 });

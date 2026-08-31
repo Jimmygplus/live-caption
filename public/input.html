@@ -12,7 +12,7 @@
       <span class="mark" aria-hidden="true">⌨</span>
       <div>
         <h1>文字发言</h1>
-        <p>你发送的内容会立即出现在现场字幕中。</p>
+        <p>发送后会确认主持端是否已经显示。</p>
         <p lang="en">Text input for non-speaking, Deaf, and hard-of-hearing people.</p>
       </div>
     </header>
@@ -20,6 +20,13 @@
     <form id="messageForm">
       <label for="name">显示名称（选填）</label>
       <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
+
+      <label for="language">输入语言</label>
+      <select id="language">
+        <option value="auto" selected>自动判断</option>
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
 
       <label for="message">想表达的内容</label>
       <textarea id="message" maxlength="500" rows="7" required autofocus
@@ -34,7 +41,7 @@
 
     <p id="status" role="status" aria-live="polite">正在连接会话……</p>
     <section id="lastSent" hidden>
-      <strong>已发送</strong>
+      <strong id="lastState">已发送</strong>
       <p id="lastText"></p>
     </section>
   </main>

@@ -815,6 +815,8 @@ body.phone .field.compact { flex: 1 1 130px; }
 body.phone .field.compact input[type="range"] { flex: 1; width: auto; }
 
 body.phone #swapBtn { align-self: stretch; padding: 11px; }
+body.phone #audienceBtn { width: 100%; justify-content: center; padding: 11px; }
+body.phone #audienceBtn .lbl { display: inline; }
 body.phone .menu { flex: 1 1 auto; }
 body.phone .menu summary { width: 100%; justify-content: center; padding: 11px 10px; }
 body.phone .menu-items { right: auto; left: 0; bottom: calc(100% + 6px); top: auto; }

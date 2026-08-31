@@ -213,7 +213,7 @@
     <h2>你的 API 密钥</h2>
     <p class="hint">
       密钥只存在这台设备的浏览器里，直接发给厂商，<strong>不经过任何中间服务器</strong>。
-      本站是纯静态页面，没有后端、没有账号、不记录任何内容。
+      本站没有账号；扫码文字发言只通过独立中继传送端到端加密的临时密文，语音和厂商密钥不会进入该中继。
     </p>
 
     <label for="keySoniox">Soniox 密钥<span class="hint-inline">字幕识别 · 必填</span></label>
@@ -254,7 +254,7 @@
         <button id="audienceCopy" type="button" class="ghost">复制</button>
       </div>
       <p id="audienceHint" class="hint"></p>
-      <p class="audience-private">会话只保存在当前服务进程内，6 小时自动失效；结束会话后二维码立即作废。</p>
+      <p id="audiencePrivacy" class="audience-private"></p>
     </div>
 
     <div class="terms-actions">

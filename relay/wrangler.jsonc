@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "live-caption-audience-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-31",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AUDIENCE_ROOMS",
+        "class_name": "AudienceRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AudienceRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
