@@ -631,8 +631,61 @@ body[data-view="ticker"] .segment[data-speaker] {
   padding: 9px 10px;
   width: 100%;
 }
-.terms input[type="password"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.terms input[type="url"] {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  width: 100%;
+}
+.terms input[type="password"]:focus-visible,
+.terms input[type="url"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .terms a { color: var(--accent); }
+
+/* ---------------------------------------------------------------- QR audience input */
+
+.audience-loading {
+  margin: 18px 0 4px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.audience-qr {
+  display: block;
+  width: min(280px, 72vw);
+  aspect-ratio: 1;
+  margin: 18px auto 4px;
+  border: 10px solid #fff;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.audience-link { display: flex; gap: 8px; margin-top: 5px; }
+.audience-link input { flex: 1; min-width: 0; }
+.audience-link .ghost { align-self: stretch; color: var(--accent); }
+.audience-dialog .hint.warn { color: #fbbf24; margin-top: 8px; }
+.audience-private {
+  margin: 12px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.segment[data-source="typed"] {
+  padding-left: 14px;
+  border-left: 3px solid #fbbf24;
+  background: color-mix(in srgb, #fbbf24 6%, transparent);
+}
+.segment[data-source="typed"] .meta { display: block; color: #fbbf24; }
+body[data-view="cinema"] .segment[data-source="typed"],
+body[data-view="ticker"] .segment[data-source="typed"] { border-left: none; padding-left: 0; }
 
 /* ---------------------------------------------------------------- floating window */
 

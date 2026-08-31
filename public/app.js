@@ -8,6 +8,8 @@
 //               unless the server has a Claude key, in which case finalized lines
 //               are translated through /api/translate.
 
+import { qrDataUrl } from './qr.js';
+
 const SONIOX_WS = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = 'stt-rt-v5';
 
@@ -118,6 +120,15 @@ const el = {
   termsWords: $('termsWords'),
   termsPairs: $('termsPairs'),
   termsCount: $('termsCount'),
+  audienceBtn: $('audienceBtn'),
+  audienceDialog: $('audienceDialog'),
+  audienceLoading: $('audienceLoading'),
+  audienceSession: $('audienceSession'),
+  audienceQr: $('audienceQr'),
+  audienceUrl: $('audienceUrl'),
+  audienceCopy: $('audienceCopy'),
+  audienceHint: $('audienceHint'),
+  audienceEnd: $('audienceEnd'),
   jumpBtn: $('jumpBtn'),
   jumpLabel: $('jumpLabel'),
   startBtn: $('startBtn'),
@@ -166,6 +177,7 @@ const app = {
   config: {
     engines: { soniox: false, webspeech: true },
     translation: { providers: [], default: 'none' },
+    audienceInput: { enabled: false, publicUrl: '' },
   },
   running: false,
   engine: 'soniox',
@@ -190,6 +202,7 @@ const app = {
   pip: null,              // the floating caption window, when open
   touchStartY: 0,         // where a touch drag began, to tell scroll direction
   locked: true,           // pin the view to the newest caption
+  audience: null,         // active QR text-input room and host polling state
 };
 
 // Domain vocabulary, applied to BOTH recognition and translation.
@@ -260,6 +273,7 @@ function localConfig() {
   return {
     engines: { soniox: Boolean(keys.soniox), webspeech: true },
     translation: { providers, default: keys.anthropic ? 'claude' : 'soniox' },
+    audienceInput: { enabled: false, publicUrl: '' },
   };
 }
 
@@ -388,6 +402,162 @@ async function loadConfig() {
   onEngineChange();
 }
 
+// ---------------------------------------------------------------- audience text input
+//
+// The QR page and this host page share no vendor credentials. They exchange only
+// short text messages through an expiring in-memory room on our own Node server.
+
+function audienceJoinUrl(session) {
+  const configured = app.config.audienceInput?.publicUrl;
+  const page = configured
+    ? new URL('input.html', `${configured.replace(/\/$/, '')}/`)
+    : new URL('./input.html', location.href);
+  page.hash = new URLSearchParams({ r: session.id, t: session.joinToken }).toString();
+  return page.href;
+}
+
+function localOnlyUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function showAudienceSession(session) {
+  const joinUrl = audienceJoinUrl(session);
+  session.joinUrl = joinUrl;
+  el.audienceLoading.hidden = true;
+  el.audienceSession.hidden = false;
+  el.audienceEnd.hidden = false;
+  el.audienceUrl.value = joinUrl;
+  try {
+    el.audienceQr.src = qrDataUrl(joinUrl);
+    el.audienceQr.hidden = false;
+    el.audienceHint.textContent = localOnlyUrl(joinUrl)
+      ? '当前链接是 localhost，手机无法访问。请用局域网 IP 打开主持端，或在服务端设置 PUBLIC_URL 后重新创建。'
+      : '让参与者用手机相机扫码；同一个二维码可供多人使用。';
+    el.audienceHint.classList.toggle('warn', localOnlyUrl(joinUrl));
+  } catch (error) {
+    el.audienceQr.hidden = true;
+    el.audienceHint.textContent = error.message;
+    el.audienceHint.classList.add('warn');
+  }
+  el.audienceBtn.classList.add('active');
+}
+
+function audienceMessageTime(message, session) {
+  const baseline = app.startedAt || session.createdAt;
+  return Math.max(0, message.at - baseline);
+}
+
+function receiveAudienceMessage(message, session) {
+  const startMs = audienceMessageTime(message, session);
+  const segment = pushSegment({
+    orig: message.text,
+    trans: '',
+    startMs,
+    endMs: startMs + 1200,
+    source: 'typed',
+    author: message.name,
+  });
+  void queueTranslation(segment, message.text, null);
+  session.received += 1;
+  el.audienceHint.textContent = `已收到 ${session.received} 条文字发言；二维码仍可继续使用。`;
+  el.audienceHint.classList.remove('warn');
+}
+
+async function pollAudienceMessages(session) {
+  if (app.audience !== session || session.closed) return;
+  try {
+    const response = await fetch(
+      `./api/audience/sessions/${encodeURIComponent(session.id)}/messages?after=${session.lastSeq}`,
+      { headers: { authorization: `Bearer ${session.hostToken}` } },
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `文字队列读取失败（${response.status}）`);
+    for (const message of body.messages || []) {
+      if (message.seq <= session.lastSeq) continue;
+      session.lastSeq = message.seq;
+      receiveAudienceMessage(message, session);
+    }
+    if (session.failures && el.errorText.textContent.startsWith('扫码文字输入暂时断开')) {
+      setError('');
+    }
+    session.failures = 0;
+  } catch (error) {
+    session.failures += 1;
+    if (session.failures === 1) setError(`扫码文字输入暂时断开：${error.message}`);
+    if (/不存在|结束|401|404/.test(error.message)) {
+      session.closed = true;
+      el.audienceBtn.classList.remove('active');
+      el.audienceHint.textContent = '文字输入会话已结束，请重新创建二维码。';
+      el.audienceHint.classList.add('warn');
+      el.audienceEnd.hidden = true;
+      return;
+    }
+  }
+  const delay = session.failures ? Math.min(8000, 800 * 2 ** session.failures) : 750;
+  session.pollTimer = setTimeout(() => void pollAudienceMessages(session), delay);
+}
+
+async function createAudienceSession() {
+  el.audienceLoading.hidden = false;
+  el.audienceLoading.textContent = '正在创建安全会话……';
+  el.audienceSession.hidden = true;
+  el.audienceEnd.hidden = true;
+
+  if (!app.config.audienceInput?.enabled) {
+    el.audienceLoading.textContent = '扫码文字输入需要 Node 服务模式；当前纯静态部署暂不支持跨设备消息同步。';
+    return;
+  }
+
+  try {
+    const response = await fetch('./api/audience/sessions', {
+      method: 'POST',
+      headers: { 'x-live-caption-client': 'host' },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `创建失败（${response.status}）`);
+    const session = {
+      ...body,
+      createdAt: Date.now(),
+      lastSeq: 0,
+      received: 0,
+      failures: 0,
+      pollTimer: null,
+      closed: false,
+    };
+    app.audience = session;
+    showAudienceSession(session);
+    void pollAudienceMessages(session);
+  } catch (error) {
+    el.audienceLoading.textContent = `无法创建文字输入会话：${error.message}`;
+  }
+}
+
+async function endAudienceSession() {
+  const session = app.audience;
+  if (!session) return;
+  session.closed = true;
+  clearTimeout(session.pollTimer);
+  app.audience = null;
+  el.audienceBtn.classList.remove('active');
+  el.audienceSession.hidden = true;
+  el.audienceEnd.hidden = true;
+  el.audienceLoading.hidden = false;
+  el.audienceLoading.textContent = '文字输入会话已结束，旧二维码已经失效。';
+  try {
+    await fetch(`./api/audience/sessions/${encodeURIComponent(session.id)}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${session.hostToken}` },
+    });
+  } catch {
+    // The room still expires server-side; ending locally must remain instant.
+  }
+}
+
 async function refreshDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
   let devices = [];
@@ -513,6 +683,7 @@ function persistNow() {
     startedAt: app.startedAt,
     segments: app.segments.slice(-STORE_MAX_SEGMENTS).map((s) => ({
       o: s.orig, t: s.trans, s: s.startMs, e: s.endMs, k: s.speaker, a: +s.at,
+      x: s.source, n: s.author,
     })),
   };
   try {
@@ -554,6 +725,8 @@ function restoreTranscript(data) {
       endMs: s.e ?? 0,
       at: new Date(s.a || data.savedAt),
       speaker: s.k || null,
+      source: s.x || 'speech',
+      author: s.n || '',
       node: null,
     };
     app.segments.push(segment);
@@ -912,12 +1085,14 @@ function renderSegment(segment) {
 
   // Colour-code speakers so a busy meeting reads as a conversation, not a wall.
   if (segment.speaker) li.dataset.speaker = speakerSlot(segment.speaker);
+  if (segment.source === 'typed') li.dataset.source = 'typed';
 
   const meta = document.createElement('p');
   meta.className = 'meta';
-  meta.textContent = segment.speaker
-    ? `${stamp(segment.startMs)} · ${speakerName(segment.speaker)}`
-    : stamp(segment.startMs);
+  const identity = segment.source === 'typed'
+    ? `⌨ ${segment.author || '现场参与者'}`
+    : segment.speaker ? speakerName(segment.speaker) : '';
+  meta.textContent = `${stamp(segment.startMs)}${identity ? ` · ${identity}` : ''}`;
 
   const orig = document.createElement('p');
   orig.className = 'original';
@@ -1017,7 +1192,7 @@ function renderLive() {
   scrollToBottom();
 }
 
-function pushSegment({ orig, trans, startMs, endMs, speaker }) {
+function pushSegment({ orig, trans, startMs, endMs, speaker, source = 'speech', author = '' }) {
   const segment = {
     id: app.nextId++,
     orig,
@@ -1026,6 +1201,8 @@ function pushSegment({ orig, trans, startMs, endMs, speaker }) {
     endMs: endMs ?? Date.now() - app.startedAt,
     at: new Date(),
     speaker: speaker || null,
+    source,
+    author,
     node: null,
   };
   app.segments.push(segment);
@@ -1775,7 +1952,10 @@ function buildMarkdown() {
   const body = app.segments
     .map((s) => {
       // Same label as on screen — the raw Soniox id would not match what was shown.
-      const meta = `**${stamp(s.startMs)}**${s.speaker ? ` · ${speakerName(s.speaker)}` : ''}`;
+      const identity = s.source === 'typed'
+        ? `⌨ ${s.author || '现场参与者'}`
+        : s.speaker ? speakerName(s.speaker) : '';
+      const meta = `**${stamp(s.startMs)}**${identity ? ` · ${identity}` : ''}`;
       return s.trans ? `${meta}\n\n> ${s.orig}\n\n${s.trans}` : `${meta}\n\n${s.orig}`;
     })
     .join('\n\n---\n\n');
@@ -2039,6 +2219,30 @@ el.termsDialog.addEventListener('close', () => {
     // Context is fixed for the life of a Soniox session.
     showNotice('术语已保存，需重启会话才会应用到识别。', '立即重启', () =>
       void restartWith(() => {}));
+  }
+});
+
+el.audienceBtn.addEventListener('click', () => {
+  el.audienceDialog.showModal();
+  if (app.audience && !app.audience.closed) showAudienceSession(app.audience);
+  else void createAudienceSession();
+});
+
+el.audienceCopy.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(el.audienceUrl.value);
+    const previous = el.audienceCopy.textContent;
+    el.audienceCopy.textContent = '已复制';
+    setTimeout(() => { el.audienceCopy.textContent = previous; }, 1400);
+  } catch {
+    el.audienceUrl.select();
+    setError('无法自动复制，请长按链接复制。');
+  }
+});
+
+el.audienceEnd.addEventListener('click', () => {
+  if (confirm('结束后当前二维码会立即失效。确定结束文字输入吗？')) {
+    void endAudienceSession();
   }
 });
 

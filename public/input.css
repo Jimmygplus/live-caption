@@ -1,0 +1,90 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0b0d10;
+  --card: #15191f;
+  --border: #2b323c;
+  --text: #f4f7fa;
+  --muted: #9ba6b4;
+  --accent: #5eead4;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  padding: max(22px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+}
+main { width: min(620px, 100%); margin: 0 auto; }
+header { display: flex; gap: 14px; align-items: center; margin: 10px 0 28px; }
+.mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 24px;
+}
+h1 { margin: 0; font-size: 24px; }
+header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+label { font-weight: 650; margin-top: 8px; }
+input, textarea, button { font: inherit; }
+input, textarea {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 17px;
+}
+textarea { resize: vertical; line-height: 1.55; min-height: 160px; }
+input:focus, textarea:focus { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.between { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+button {
+  margin-top: 12px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #06201b;
+  font-size: 17px;
+  font-weight: 750;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: wait; }
+#status { color: var(--muted); text-align: center; font-size: 14px; }
+#status.error { color: #fca5a5; }
+#status.ok { color: var(--accent); }
+#lastSent {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--card);
+  border-radius: 8px;
+}
+#lastSent p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --card: #fff;
+    --border: #dfe3e8;
+    --text: #12161b;
+    --muted: #66717e;
+    --accent: #0d9488;
+  }
+}

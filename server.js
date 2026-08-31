@@ -1,17 +1,19 @@
 // Live Caption & Translation — minimal zero-dependency server.
 //
 // The browser streams audio DIRECTLY to Soniox over WebSocket; audio never
-// touches this process. So this server does only three things:
+// touches this process. So this server does only a few things:
 //   1. serve ./public
 //   2. GET  /api/config    — tell the client which engines are usable
 //   3. POST /api/token     — mint a short-lived Soniox key (long-lived key stays here)
 //   4. POST /api/translate — optional Claude-backed translation, used only by the
 //                            browser Web Speech engine (Soniox translates inline, free)
+//   5. /api/audience/*     — short-lived in-memory rooms for QR text input
 //
 // Deliberately dependency-free so it runs with `node server.js`, no npm install.
 // That is also why the Anthropic call below is raw HTTP rather than the SDK.
 
 import { createServer } from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +27,12 @@ import {
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT || 5175);
+
+const AUDIENCE_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+const AUDIENCE_MAX_SESSIONS = 100;
+const AUDIENCE_MAX_MESSAGES = 200;
+const AUDIENCE_MAX_TEXT = 500;
+const audienceSessions = new Map();
 
 const SONIOX_TOKEN_URL = 'https://api.soniox.com/v1/auth/temporary-api-key';
 
@@ -73,6 +81,27 @@ function sendJSON(res, status, body) {
   res.end(payload);
 }
 
+function bearerToken(req) {
+  const match = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || '';
+}
+
+function sameToken(actual, supplied) {
+  const a = Buffer.from(String(actual));
+  const b = Buffer.from(String(supplied));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function newToken(bytes = 18) {
+  return randomBytes(bytes).toString('base64url');
+}
+
+function pruneAudienceSessions(now = Date.now()) {
+  for (const [id, session] of audienceSessions) {
+    if (session.closed || session.expiresAt <= now) audienceSessions.delete(id);
+  }
+}
+
 function readBody(req, limitBytes = 256 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -111,7 +140,126 @@ async function handleConfig(res) {
       providers: listProviders(),
       default: defaultProvider(),
     },
+    audienceInput: {
+      enabled: true,
+      // Set PUBLIC_URL in production when the externally reachable origin differs
+      // from what the host browser sees (for example behind a reverse proxy).
+      publicUrl: String(process.env.PUBLIC_URL || '').replace(/\/$/, ''),
+    },
   });
+}
+
+async function handleCreateAudienceSession(req, res) {
+  // A non-simple header makes cross-site form posts and no-CORS fetches unable to
+  // allocate rooms. The public server deliberately exposes no CORS policy.
+  if (req.headers['x-live-caption-client'] !== 'host') {
+    return sendJSON(res, 403, { error: '只能从主持端创建文字输入会话。' });
+  }
+  pruneAudienceSessions();
+  if (audienceSessions.size >= AUDIENCE_MAX_SESSIONS) {
+    return sendJSON(res, 503, { error: '文字输入会话已满，请稍后再试。' });
+  }
+
+  const now = Date.now();
+  const session = {
+    id: newToken(9),
+    hostToken: newToken(),
+    joinToken: newToken(),
+    createdAt: now,
+    expiresAt: now + AUDIENCE_SESSION_TTL_MS,
+    nextSeq: 1,
+    messages: [],
+    rate: new Map(),
+    closed: false,
+  };
+  audienceSessions.set(session.id, session);
+  sendJSON(res, 201, {
+    id: session.id,
+    hostToken: session.hostToken,
+    joinToken: session.joinToken,
+    expiresAt: session.expiresAt,
+  });
+}
+
+function audienceSession(id, req, res, role) {
+  pruneAudienceSessions();
+  const session = audienceSessions.get(id);
+  if (!session || session.closed) {
+    sendJSON(res, 404, { error: '会话不存在或已结束。' });
+    return null;
+  }
+  const expected = role === 'host' ? session.hostToken : session.joinToken;
+  if (!sameToken(expected, bearerToken(req))) {
+    sendJSON(res, 401, { error: '会话凭证无效。' });
+    return null;
+  }
+  return session;
+}
+
+async function handleAudienceMessage(req, res, session) {
+  let body;
+  try {
+    const raw = await readBody(req, 8 * 1024);
+    body = raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    return sendJSON(res, 400, { error: `请求内容有误：${err.message}` });
+  }
+
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 30) : '';
+  const clientId = typeof body.clientId === 'string'
+    ? body.clientId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+    : '';
+  if (!text) return sendJSON(res, 400, { error: '请输入要表达的内容。' });
+  if (text.length > AUDIENCE_MAX_TEXT) {
+    return sendJSON(res, 400, { error: `每条消息最多 ${AUDIENCE_MAX_TEXT} 个字符。` });
+  }
+
+  // A shared QR token is expected; rate-limit each browser identity rather than
+  // the whole room so several participants can type at the same time.
+  const now = Date.now();
+  const clientKey = `client:${clientId || 'anonymous'}`;
+  const ipKey = `ip:${String(req.socket.remoteAddress || 'anonymous')}`;
+  const take = (key, limit) => {
+    const recent = (session.rate.get(key) || []).filter((at) => now - at < 10_000);
+    if (recent.length >= limit) return false;
+    recent.push(now);
+    session.rate.set(key, recent);
+    return true;
+  };
+  // Client IDs keep normal participants independent; the wider IP bucket stops
+  // a malicious browser from bypassing that limit by inventing IDs repeatedly.
+  if (!take(ipKey, 40) || !take(clientKey, 8)) {
+    return sendJSON(res, 429, { error: '发送太快了，请稍等几秒。' });
+  }
+  if (session.rate.size > 500) {
+    for (const [key, timestamps] of session.rate) {
+      if (!timestamps.some((at) => now - at < 10_000)) session.rate.delete(key);
+    }
+  }
+
+  const message = {
+    seq: session.nextSeq++,
+    text,
+    name: name || '现场参与者',
+    clientId,
+    at: now,
+  };
+  session.messages.push(message);
+  if (session.messages.length > AUDIENCE_MAX_MESSAGES) session.messages.shift();
+  sendJSON(res, 202, { ok: true, seq: message.seq });
+}
+
+function handleAudienceMessages(req, res, session, url) {
+  const after = Math.max(0, Number(url.searchParams.get('after')) || 0);
+  const messages = session.messages.filter((message) => message.seq > after).slice(0, 50);
+  sendJSON(res, 200, { messages, expiresAt: session.expiresAt });
+}
+
+function handleCloseAudienceSession(res, session) {
+  session.closed = true;
+  audienceSessions.delete(session.id);
+  sendJSON(res, 200, { ok: true });
 }
 
 // Pre-meeting check: exercises every configured service for real and reports
@@ -312,12 +460,37 @@ async function serveStatic(req, res) {
 
 const server = createServer(async (req, res) => {
   try {
-    const { pathname } = new URL(req.url, 'http://localhost');
+    const url = new URL(req.url, 'http://localhost');
+    const { pathname } = url;
 
     if (pathname === '/api/config' && req.method === 'GET') return await handleConfig(res);
     if (pathname === '/api/selftest' && req.method === 'POST') return await handleSelfTest(res);
     if (pathname === '/api/token' && req.method === 'POST') return await handleToken(res);
     if (pathname === '/api/translate' && req.method === 'POST') return await handleTranslate(req, res);
+    if (pathname === '/api/audience/sessions' && req.method === 'POST') {
+      return await handleCreateAudienceSession(req, res);
+    }
+
+    const audienceMatch = pathname.match(/^\/api\/audience\/sessions\/([^/]+)(\/messages)?$/);
+    if (audienceMatch) {
+      const id = audienceMatch[1];
+      const isMessages = Boolean(audienceMatch[2]);
+      if (isMessages && req.method === 'POST') {
+        const session = audienceSession(id, req, res, 'join');
+        if (session) return await handleAudienceMessage(req, res, session);
+        return;
+      }
+      if (isMessages && req.method === 'GET') {
+        const session = audienceSession(id, req, res, 'host');
+        if (session) return handleAudienceMessages(req, res, session, url);
+        return;
+      }
+      if (!isMessages && req.method === 'DELETE') {
+        const session = audienceSession(id, req, res, 'host');
+        if (session) return handleCloseAudienceSession(res, session);
+        return;
+      }
+    }
 
     if (req.method === 'GET' || req.method === 'HEAD') return await serveStatic(req, res);
 

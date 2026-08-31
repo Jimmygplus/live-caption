@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>文字发言 · Live Caption</title>
+  <link rel="stylesheet" href="./input.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <span class="mark" aria-hidden="true">⌨</span>
+      <div>
+        <h1>文字发言</h1>
+        <p>你发送的内容会立即出现在现场字幕中。</p>
+        <p lang="en">Text input for non-speaking, Deaf, and hard-of-hearing people.</p>
+      </div>
+    </header>
+
+    <form id="messageForm">
+      <label for="name">显示名称（选填）</label>
+      <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
+
+      <label for="message">想表达的内容</label>
+      <textarea id="message" maxlength="500" rows="7" required autofocus
+        placeholder="在这里输入，现场会看到原文……"></textarea>
+      <div class="between">
+        <span id="count">0 / 500</span>
+        <span>Ctrl / ⌘ + Enter 发送</span>
+      </div>
+
+      <button id="sendBtn" type="submit">发送到现场字幕</button>
+    </form>
+
+    <p id="status" role="status" aria-live="polite">正在连接会话……</p>
+    <section id="lastSent" hidden>
+      <strong>已发送</strong>
+      <p id="lastText"></p>
+    </section>
+  </main>
+  <script type="module" src="./input.js"></script>
+</body>
+</html>

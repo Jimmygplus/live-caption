@@ -83,6 +83,7 @@
 
   <button id="keysBtn" class="ghost" type="button" hidden title="填写你自己的 API 密钥">密钥</button>
   <button id="termsBtn" class="ghost" type="button" title="行业术语与场景（提升识别和翻译准确度）">术语</button>
+  <button id="audienceBtn" class="ghost" type="button" title="让现场参与者扫码输入文字">⌨<span class="lbl">扫码发言</span></button>
   <button id="startBtn" class="primary" type="button">开始</button>
 
   <div class="spacer"></div>
@@ -234,6 +235,32 @@
       <span class="spacer"></span>
       <button value="cancel" class="ghost" type="submit">取消</button>
       <button value="save" class="primary" type="submit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="audienceDialog" class="terms audience-dialog">
+  <form method="dialog">
+    <h2>扫码文字发言</h2>
+    <p class="hint">失语者、失聪及听障人士可用手机扫码输入，发送后会进入当前字幕记录并同步显示。</p>
+    <p class="hint" lang="en">For non-speaking, Deaf, and hard-of-hearing people.</p>
+
+    <div id="audienceLoading" class="audience-loading">正在创建安全会话……</div>
+    <div id="audienceSession" hidden>
+      <img id="audienceQr" class="audience-qr" alt="手机文字输入页面二维码" />
+      <label for="audienceUrl">手机访问链接</label>
+      <div class="audience-link">
+        <input id="audienceUrl" type="url" readonly />
+        <button id="audienceCopy" type="button" class="ghost">复制</button>
+      </div>
+      <p id="audienceHint" class="hint"></p>
+      <p class="audience-private">会话只保存在当前服务进程内，6 小时自动失效；结束会话后二维码立即作废。</p>
+    </div>
+
+    <div class="terms-actions">
+      <button id="audienceEnd" type="button" class="ghost danger" hidden>结束文字输入</button>
+      <span class="spacer"></span>
+      <button value="close" class="primary" type="submit">完成</button>
     </div>
   </form>
 </dialog>
