@@ -570,8 +570,8 @@ async function refreshDevices() {
   const previous = el.device.value;
 
   el.device.innerHTML = '';
-  el.device.append(new Option('🔊 标签页 / 系统声音（浏览器捕获）', 'display'));
   el.device.append(new Option('默认麦克风', ''));
+  el.device.append(new Option('🔊 标签页 / 系统声音（浏览器捕获）', 'display'));
   inputs.forEach((d, i) => {
     el.device.append(new Option(d.label || `输入设备 ${i + 1}`, d.deviceId));
   });
