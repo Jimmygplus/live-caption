@@ -83,7 +83,7 @@
 
   <button id="keysBtn" class="ghost" type="button" hidden title="填写你自己的 API 密钥">密钥</button>
   <button id="termsBtn" class="ghost" type="button" title="行业术语与场景（提升识别和翻译准确度）">术语</button>
-  <button id="audienceBtn" class="ghost" type="button" title="让现场参与者扫码输入文字">⌨<span class="lbl">扫码发言</span></button>
+  <button id="audienceBtn" class="ghost" type="button" title="让参与者扫码查看字幕或输入文字">◉<span class="lbl">扫码加入</span></button>
   <button id="startBtn" class="primary" type="button">开始</button>
 
   <div class="spacer"></div>
@@ -213,7 +213,7 @@
     <h2>你的 API 密钥</h2>
     <p class="hint">
       密钥只存在这台设备的浏览器里，直接发给厂商，<strong>不经过任何中间服务器</strong>。
-      本站没有账号；扫码文字发言只通过独立中继传送端到端加密的临时密文，语音和厂商密钥不会进入该中继。
+      本站没有账号；字幕直播间只通过独立中继传送端到端加密的临时密文，语音和厂商密钥不会进入该中继。
     </p>
 
     <label for="keySoniox">Soniox 密钥<span class="hint-inline">字幕识别 · 必填</span></label>
@@ -241,13 +241,13 @@
 
 <dialog id="audienceDialog" class="terms audience-dialog">
   <form method="dialog">
-    <h2>扫码文字发言</h2>
-    <p class="hint">失语者、失聪及听障人士可用手机扫码输入，发送后会进入当前字幕记录并同步显示。</p>
+    <h2>扫码加入字幕直播间</h2>
+    <p class="hint">失语者、失聪者及重听者可扫码查看原文与译文，也可输入文字并同步到所有字幕屏幕。</p>
     <p class="hint" lang="en">For non-speaking, Deaf, and hard-of-hearing people.</p>
 
     <div id="audienceLoading" class="audience-loading">正在创建安全会话……</div>
     <div id="audienceSession" hidden>
-      <img id="audienceQr" class="audience-qr" alt="手机文字输入页面二维码" />
+      <img id="audienceQr" class="audience-qr" alt="手机字幕直播间二维码" />
       <label for="audienceUrl">手机访问链接</label>
       <div class="audience-link">
         <input id="audienceUrl" type="url" readonly />
@@ -258,7 +258,7 @@
     </div>
 
     <div class="terms-actions">
-      <button id="audienceEnd" type="button" class="ghost danger" hidden>结束文字输入</button>
+      <button id="audienceEnd" type="button" class="ghost danger" hidden>结束字幕直播间</button>
       <span class="spacer"></span>
       <button value="close" class="primary" type="submit">完成</button>
     </div>

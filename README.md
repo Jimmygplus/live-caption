@@ -54,13 +54,15 @@ PUBLIC_URL=https://caption.example.com node server.js
 
 本地同一 Wi-Fi 测试时，用电脑的局域网 IP（例如 `http://192.168.1.20:5175`）打开主持端；二维码若包含 `localhost`，手机无法访问。
 
-### 扫码文字发言
+### 扫码字幕直播间
 
-这个入口面向**失语者、失聪及听障人士**（**non-speaking, Deaf, and hard-of-hearing people**），让无法或不便通过语音参与的人把想表达的内容直接送到现场字幕。
+这个入口面向**失语者、失聪者及重听者**（**non-speaking, Deaf, and hard-of-hearing people**），让无法或不便通过语音参与的人把想表达的内容直接送到现场字幕。
 
-主持端点击「扫码发言」创建一个 6 小时有效的临时房间。参与者扫码后可填写显示名称和最多 500 字的内容，发送后会作为带 `⌨` 标识的段落进入同一字幕列表、滚动、恢复与导出流程。
+主持端点击「扫码加入」创建一个 6 小时有效的临时房间。参与者扫码后既能实时查看原文和译文，也可填写显示名称和最多 500 字的内容。文字发言会作为带 `⌨` 标识的段落进入主持端记录，再同步到所有扫码屏幕。
 
-GitHub Pages 静态版本使用 `relay/` 下的 Cloudflare Durable Object：手机在本机用 AES-GCM 加密文字，中继只保存密文；主持端解密并显示后返回端到端确认。房间凭证只放在二维码 URL fragment，读取后会从手机地址栏移除。参与者刷新页面时，尚未确认的消息会从当前标签页的 `sessionStorage` 恢复并按同一 `messageId` 重试，因此不会重复显示。
+GitHub Pages 静态版本使用 `relay/` 下的 Cloudflare Durable Object：主持端与手机都在本机用 AES-GCM 加解密，中继看不到字幕或发言正文。实时草稿只转发；最近 100 条最终字幕以密文暂存，用于扫码端断线重连。房间凭证只放在二维码 URL fragment，读取后会从手机地址栏移除。参与者刷新页面时，尚未确认的消息会从当前标签页的 `sessionStorage` 恢复并按同一 `messageId` 重试，因此不会重复显示。
+
+当前多端字幕观看只支持静态部署的加密 relay 模式；本地 Node 模式继续提供文字输入，不承诺字幕回放。协议细节见 [`docs/caption-room-protocol.md`](docs/caption-room-protocol.md)。
 
 部署中继：
 
@@ -72,7 +74,7 @@ npx wrangler deploy --config relay/wrangler.jsonc
 
 部署完成后，将 Worker 地址写入 `public/relay-config.js` 的 `AUDIENCE_RELAY_URL`。Durable Object 使用 SQLite storage 和可休眠 WebSocket；房间 6 小时后由 alarm 清除。
 
-- 房间只存在当前 Node 进程内，不落盘；重启或点击「结束文字输入」后立即失效。
+- Node 文字房间只存在当前进程内；relay 字幕房间最多 6 小时，点击「结束字幕直播间」后立即失效。
 - 主持端和参与端使用不同的随机凭证；二维码不能读取字幕、密钥或主持端配置。
 - 每个手机浏览器独立限流，避免误触刷屏，同时允许多人共用一个二维码。
 - 输入内容若配置了外部翻译服务，会沿用当前字幕翻译设置；Soniox 内置翻译仅作用于音频流。
@@ -210,7 +212,7 @@ brew install blackhole-2ch
 | 显示 | 列表滚动 / 影院字幕（只留最新几句、居中贴底）/ 单行横滚 |
 | 术语 | 行业黑话与场景，识别和翻译都会用上；内置 5 个预置词库可叠加 |
 | 密钥 | 仅静态模式出现，填你自己的 API 密钥 |
-| ⌨ 扫码发言 | 创建手机文字输入二维码；Node 服务模式可用，内容进入同一字幕记录 |
+| ◉ 扫码加入 | 创建字幕直播间二维码；relay 模式同步原文、译文与文字发言，Node 模式保留文字输入 |
 | 门限 | 状态栏噪声门 —— 挡掉背景里小声说话的人 |
 | ⧉ 浮窗 | 浮窗字幕：Document Picture-in-Picture 独立小窗，置顶在其他应用之上（Chrome/Edge 116+） |
 | 📌 锁定 | 锁定最新：始终停在最新字幕。**向上滚一下即解锁**（滚轮、触摸、PageUp/Home/↑ 都算） |
@@ -269,9 +271,11 @@ brew install blackhole-2ch
    │
    └── POST ./api/token ──→ 本地 server.js ──→ Soniox REST（换 60 秒临时 key）
 
-手机 input.html ── AES-GCM 密文 ──→ 临时中继 ── WebSocket ──→ 主持端解密、显示、ACK
-                                     │
-本地 Node 模式 ── POST 文字 ──→ 进程内临时房间 ── 主持端轮询 ──┘
+主持端 ── AES-GCM 字幕密文 ──→ 临时中继 ──→ 多个扫码端解密、原位更新
+  ↑                              │
+  └── 解密、显示、ACK ←── 参与端文字密文
+
+本地 Node 模式 ── POST 文字 ──→ 进程内临时房间 ──→ 主持端轮询
 ```
 
 `server.js` 保持零依赖：发静态文件、签发临时 key、代理翻译，并维护本地扫码输入的短期内存房间。静态站的中继独立部署，只接触随机房间标识、密文和递增序号；两种模式都不会接触厂商密钥。

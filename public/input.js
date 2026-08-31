@@ -1,4 +1,8 @@
-import { encryptAudiencePayload, hashAudienceToken } from './audience-crypto.js';
+import {
+  decryptAudiencePayload,
+  encryptAudiencePayload,
+  hashAudienceToken,
+} from './audience-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
 
 const form = document.querySelector('#messageForm');
@@ -11,6 +15,10 @@ const count = document.querySelector('#count');
 const lastSent = document.querySelector('#lastSent');
 const lastState = document.querySelector('#lastState');
 const lastText = document.querySelector('#lastText');
+const captionPanel = document.querySelector('#captionPanel');
+const captionList = document.querySelector('#captionList');
+const captionEmpty = document.querySelector('#captionEmpty');
+const captionState = document.querySelector('#captionState');
 
 const params = new URLSearchParams(location.hash.slice(1));
 let savedRelayRoom = {};
@@ -31,6 +39,8 @@ let ready = false;
 let reconnectAttempt = 0;
 let reconnectTimer = null;
 let joinTokenHash = '';
+let captionChain = Promise.resolve();
+const captions = new Map();
 const pendingKey = `lc.audience.pending.${room}`;
 let savedPending = [];
 try { savedPending = JSON.parse(sessionStorage.getItem(pendingKey) || '[]'); } catch {}
@@ -62,6 +72,90 @@ function relayWebSocketUrl() {
   return url.href;
 }
 
+function captionTime(ms) {
+  const seconds = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function nearCaptionBottom() {
+  return captionList.scrollHeight - captionList.scrollTop - captionList.clientHeight < 160;
+}
+
+function removeCaption(captionId) {
+  const current = captions.get(captionId);
+  current?.node.remove();
+  captions.delete(captionId);
+}
+
+function renderCaption(payload) {
+  const current = captions.get(payload.captionId);
+  if (current && current.revision >= payload.revision) return;
+  const shouldFollow = nearCaptionBottom();
+  if (payload.replacesDraft && payload.captionId !== 'live-draft') removeCaption('live-draft');
+
+  let node = current?.node;
+  if (!node) {
+    node = document.createElement('li');
+    node.className = 'caption';
+    const meta = document.createElement('p');
+    meta.className = 'caption-meta';
+    const original = document.createElement('p');
+    original.className = 'caption-original';
+    const translation = document.createElement('p');
+    translation.className = 'caption-translation';
+    node.append(meta, original, translation);
+    captionList.append(node);
+  }
+
+  const identity = payload.source === 'typed'
+    ? `⌨ ${payload.author || '现场参与者'}`
+    : payload.speaker ? `🎙 ${payload.speaker}` : '🎙 现场';
+  node.dataset.state = payload.state;
+  node.dataset.source = payload.source;
+  node.querySelector('.caption-meta').textContent = `${captionTime(payload.startMs)} · ${identity}${payload.state === 'draft' ? ' · 正在说' : ''}`;
+  node.querySelector('.caption-original').textContent = payload.orig;
+  node.querySelector('.caption-translation').textContent = payload.trans;
+  node.classList.toggle('no-translation', !payload.trans);
+  captions.set(payload.captionId, { revision: payload.revision, node });
+  captionEmpty.hidden = true;
+  captionState.textContent = payload.state === 'draft' ? '实时接收中' : '已同步';
+
+  while (captionList.children.length > 100) {
+    const oldest = captionList.firstElementChild;
+    const id = [...captions].find(([, item]) => item.node === oldest)?.[0];
+    if (id) captions.delete(id);
+    oldest.remove();
+  }
+  if (shouldFollow) captionList.scrollTop = captionList.scrollHeight;
+}
+
+function validCaptionPayload(payload, envelope) {
+  return payload
+    && payload.captionId === envelope.captionId
+    && payload.captionSeq === envelope.captionSeq
+    && Number.isSafeInteger(payload.revision)
+    && payload.revision > 0
+    && ['draft', 'final', 'corrected'].includes(payload.state)
+    && ['speech', 'typed'].includes(payload.source)
+    && typeof payload.orig === 'string'
+    && typeof payload.trans === 'string'
+    && payload.orig.length <= 3000
+    && payload.trans.length <= 3000
+    && typeof payload.author === 'string'
+    && payload.author.length <= 30
+    && typeof payload.speaker === 'string'
+    && payload.speaker.length <= 80;
+}
+
+async function receiveCaption(envelope) {
+  try {
+    const payload = await decryptAudiencePayload(joinSecret, envelope.eventId, envelope);
+    if (validCaptionPayload(payload, envelope)) renderCaption(payload);
+  } catch {
+    setStatus('收到一条无法解密的字幕更新，已忽略。', 'error');
+  }
+}
+
 async function connectRelay() {
   if (!relayMode || !AUDIENCE_RELAY_URL || socket?.readyState === WebSocket.OPEN) return;
   clearTimeout(reconnectTimer);
@@ -78,8 +172,11 @@ async function connectRelay() {
     if (message.type === 'ready') {
       ready = true;
       reconnectAttempt = 0;
-      setStatus('安全通道已连接，可以输入。', 'ok');
+      captionState.textContent = '已连接';
+      setStatus('安全通道已连接，可以看字幕或输入文字。', 'ok');
       for (const item of pending.values()) socket.send(JSON.stringify(item.envelope));
+    } else if (message.type === 'caption') {
+      captionChain = captionChain.then(() => receiveCaption(message));
     } else if (message.type === 'queued') {
       const item = pending.get(message.messageId);
       if (item) setLast(item, '已送达，等待主持端显示');
@@ -94,7 +191,8 @@ async function connectRelay() {
     } else if (message.type === 'closed') {
       ready = false;
       form.hidden = true;
-      setStatus('本次文字发言会话已经结束。', 'error');
+      captionState.textContent = '直播间已结束';
+      setStatus('本次字幕直播间已经结束。', 'error');
     } else if (message.type === 'error') {
       if (message.code === 'invalid_message') {
         pending.delete(message.messageId);
@@ -125,6 +223,7 @@ if (!room || (!legacyToken && !joinSecret)) {
 } else if (relayMode) {
   void connectRelay().catch(() => setStatus('无法连接安全通道，请重新扫描二维码。', 'error'));
 } else {
+  captionPanel.hidden = true;
   setStatus('已连接，可以输入。', 'ok');
 }
 

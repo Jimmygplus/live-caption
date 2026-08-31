@@ -17,7 +17,7 @@ body {
   color: var(--text);
   padding: max(22px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
 }
-main { width: min(620px, 100%); margin: 0 auto; }
+main { width: min(720px, 100%); margin: 0 auto; }
 header { display: flex; gap: 14px; align-items: center; margin: 10px 0 28px; }
 .mark {
   display: grid;
@@ -30,7 +30,46 @@ header { display: flex; gap: 14px; align-items: center; margin: 10px 0 28px; }
   font-size: 24px;
 }
 h1 { margin: 0; font-size: 24px; }
+h2 { margin: 0; font-size: 18px; }
 header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.caption-panel {
+  margin-bottom: 18px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.caption-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.caption-heading span, .caption-empty { color: var(--muted); font-size: 13px; }
+.caption-empty { margin: 28px 0; text-align: center; }
+.caption-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(52dvh, 520px);
+  margin: 14px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.caption {
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.caption[data-state="draft"] { opacity: 0.72; border-style: dashed; }
+.caption[data-source="typed"] { border-left: 3px solid var(--accent); }
+.caption-meta { margin: 0 0 5px; color: var(--muted); font-size: 12px; }
+.caption-original, .caption-translation {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.caption-original { font-size: clamp(19px, 4.8vw, 27px); line-height: 1.42; }
+.caption-translation { margin-top: 7px; color: var(--accent); font-size: clamp(16px, 4vw, 21px); line-height: 1.4; }
+.caption.no-translation .caption-translation { display: none; }
 form {
   display: flex;
   flex-direction: column;
@@ -40,6 +79,7 @@ form {
   border: 1px solid var(--border);
   border-radius: 16px;
 }
+form h2 { margin-bottom: 4px; }
 label { font-weight: 650; margin-top: 8px; }
 input, textarea, select, button { font: inherit; }
 input, textarea, select {

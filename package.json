@@ -5,7 +5,7 @@
   "description": "Real-time live captioning and translation in the browser (Soniox streaming ASR + translation)",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node server.js",

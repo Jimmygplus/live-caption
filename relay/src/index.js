@@ -1,5 +1,6 @@
 const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_MESSAGES = 200;
+const MAX_CAPTIONS = 100;
 const MAX_CIPHERTEXT = 6_000;
 const ALLOWED_ORIGINS = new Set([
   'https://jimmygplus.github.io',
@@ -113,6 +114,8 @@ export class AudienceRoom {
         expiresAt: body.expiresAt,
         nextSeq: 1,
         messageCount: 0,
+        nextCaptionSeq: 1,
+        captionCount: 0,
         closed: false,
       };
       await this.state.storage.put('meta', meta);
@@ -174,6 +177,7 @@ export class AudienceRoom {
       socket.serializeAttachment(attachment);
       socket.send(JSON.stringify({ type: 'ready', expiresAt: meta.expiresAt }));
       if (message.role === 'host') await this.replayPending(socket);
+      if (message.role === 'participant') await this.replayCaptions(socket);
       return;
     }
 
@@ -182,6 +186,9 @@ export class AudienceRoom {
     }
     if (attachment.role === 'host' && message.type === 'ack') {
       return this.acknowledgeMessage(message.messageId);
+    }
+    if (attachment.role === 'host' && message.type === 'caption') {
+      return this.acceptCaption(message, meta);
     }
     if (attachment.role === 'host' && message.type === 'close-room') {
       return this.closeRoom(meta);
@@ -256,10 +263,68 @@ export class AudienceRoom {
     for (const envelope of pending.values()) socket.send(JSON.stringify(envelope));
   }
 
+  async acceptCaption(message, meta) {
+    const eventId = String(message.eventId || '');
+    const captionId = String(message.captionId || '');
+    const captionSeq = Number(message.captionSeq);
+    const persist = message.persist === true;
+    const iv = String(message.iv || '');
+    const ciphertext = String(message.ciphertext || '');
+    if (
+      !/^[A-Za-z0-9_-]{16,100}$/.test(eventId)
+      || !/^[A-Za-z0-9_-]{1,100}$/.test(captionId)
+      || !Number.isSafeInteger(captionSeq)
+      || captionSeq < 0
+      || captionSeq > 1_000_000_000
+      || iv.length > 32
+      || ciphertext.length > MAX_CIPHERTEXT
+    ) return;
+
+    const envelope = {
+      type: 'caption',
+      eventId,
+      captionId,
+      captionSeq,
+      persist,
+      iv,
+      ciphertext,
+    };
+
+    if (persist) {
+      meta.captionCount ||= 0;
+      meta.nextCaptionSeq ||= 1;
+      const idKey = `caption-id:${captionId}`;
+      const existingKey = await this.state.storage.get(idKey);
+      let key = existingKey;
+      if (!key) {
+        while (meta.captionCount >= MAX_CAPTIONS) await this.dropOldestCaption(meta);
+        const seq = Math.max(captionSeq, meta.nextCaptionSeq);
+        meta.nextCaptionSeq = seq + 1;
+        key = `caption:${String(seq).padStart(10, '0')}:${captionId}`;
+        meta.captionCount += 1;
+      }
+      await this.state.storage.put({ meta, [key]: envelope, [idKey]: key });
+    }
+
+    this.broadcastToParticipants(envelope);
+  }
+
+  async replayCaptions(socket) {
+    const captions = await this.state.storage.list({ prefix: 'caption:' });
+    for (const envelope of captions.values()) socket.send(JSON.stringify(envelope));
+  }
+
   broadcastToHosts(envelope) {
     for (const socket of this.state.getWebSockets()) {
       const peer = socket.deserializeAttachment();
       if (peer?.authenticated && peer.role === 'host') socket.send(JSON.stringify(envelope));
+    }
+  }
+
+  broadcastToParticipants(envelope) {
+    for (const socket of this.state.getWebSockets()) {
+      const peer = socket.deserializeAttachment();
+      if (peer?.authenticated && peer.role === 'participant') socket.send(JSON.stringify(envelope));
     }
   }
 
@@ -273,6 +338,18 @@ export class AudienceRoom {
     const [key, envelope] = entry;
     await this.state.storage.delete([key, `id:${envelope.messageId}`]);
     meta.messageCount = Math.max(0, meta.messageCount - 1);
+  }
+
+  async dropOldestCaption(meta) {
+    const oldest = await this.state.storage.list({ prefix: 'caption:', limit: 1 });
+    const entry = oldest.entries().next().value;
+    if (!entry) {
+      meta.captionCount = 0;
+      return;
+    }
+    const [key, envelope] = entry;
+    await this.state.storage.delete([key, `caption-id:${envelope.captionId}`]);
+    meta.captionCount = Math.max(0, meta.captionCount - 1);
   }
 
   async closeRoom(meta) {

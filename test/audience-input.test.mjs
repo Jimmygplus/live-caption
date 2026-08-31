@@ -185,10 +185,10 @@ test('audience relay payloads are encrypted, authenticated and language-aware', 
   assert.match(qrSvg(joinUrl), /^<svg/);
 });
 
-test('relay room authenticates peers, replays ciphertext and acknowledges display', async () => {
+test('relay room authenticates peers, syncs encrypted captions and acknowledges display', async () => {
   const hostSecret = randomAudienceSecret();
   const joinSecret = randomAudienceSecret();
-  const sockets = [new TestSocket(), new TestSocket()];
+  const sockets = [new TestSocket(), new TestSocket(), new TestSocket()];
   const state = {
     storage: new MemoryStorage(),
     getWebSockets: () => sockets,
@@ -205,15 +205,19 @@ test('relay room authenticates peers, replays ciphertext and acknowledges displa
   }));
   assert.equal(initialized.status, 204);
 
-  const [host, participant] = sockets;
+  const [host, participant, secondParticipant] = sockets;
   await relayRoom.webSocketMessage(host, JSON.stringify({
     type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
   }));
   await relayRoom.webSocketMessage(participant, JSON.stringify({
     type: 'auth', role: 'participant', tokenHash: await hashAudienceToken(joinSecret), clientId: 'phone-1',
   }));
+  await relayRoom.webSocketMessage(secondParticipant, JSON.stringify({
+    type: 'auth', role: 'participant', tokenHash: await hashAudienceToken(joinSecret), clientId: 'phone-2',
+  }));
   assert.equal(host.messages[0].type, 'ready');
   assert.equal(participant.messages[0].type, 'ready');
+  assert.equal(secondParticipant.messages[0].type, 'ready');
 
   const messageId = 'message-00000003';
   const encrypted = await encryptAudiencePayload(joinSecret, messageId, {
@@ -233,4 +237,87 @@ test('relay room authenticates peers, replays ciphertext and acknowledges displa
     type: 'message', messageId, ...encrypted,
   }));
   assert.equal(participant.messages.at(-1).type, 'displayed');
+
+  const captionId = 'segment-1';
+  const captionEventId = 'caption-event-00000001';
+  const captionPayload = {
+    captionId,
+    captionSeq: 1,
+    revision: 1,
+    state: 'final',
+    orig: 'Welcome to the room.',
+    trans: '欢迎来到直播间。',
+    source: 'speech',
+    author: '',
+    speaker: 'Speaker A',
+    startMs: 1000,
+    replacesDraft: true,
+    updatedAt: Date.now(),
+  };
+  const encryptedCaption = await encryptAudiencePayload(joinSecret, captionEventId, captionPayload);
+  await relayRoom.webSocketMessage(host, JSON.stringify({
+    type: 'caption',
+    eventId: captionEventId,
+    captionId,
+    captionSeq: 1,
+    persist: true,
+    ...encryptedCaption,
+  }));
+
+  for (const peer of [participant, secondParticipant]) {
+    const envelope = peer.messages.at(-1);
+    assert.equal(envelope.type, 'caption');
+    assert.equal(envelope.ciphertext, encryptedCaption.ciphertext);
+    assert.deepEqual(
+      await decryptAudiencePayload(joinSecret, captionEventId, envelope),
+      captionPayload,
+    );
+  }
+
+  const storedCaptions = await state.storage.list({ prefix: 'caption:' });
+  assert.equal(storedCaptions.size, 1);
+  assert.ok(!JSON.stringify([...storedCaptions.values()]).includes(captionPayload.orig));
+  assert.ok(!JSON.stringify([...storedCaptions.values()]).includes(captionPayload.trans));
+
+  const correctedEventId = 'caption-event-00000002';
+  const correctedPayload = {
+    ...captionPayload,
+    revision: 2,
+    state: 'corrected',
+    trans: '欢迎进入字幕直播间。',
+    updatedAt: Date.now() + 1,
+  };
+  const encryptedCorrection = await encryptAudiencePayload(joinSecret, correctedEventId, correctedPayload);
+  await relayRoom.webSocketMessage(host, JSON.stringify({
+    type: 'caption',
+    eventId: correctedEventId,
+    captionId,
+    captionSeq: 1,
+    persist: true,
+    ...encryptedCorrection,
+  }));
+  assert.equal((await state.storage.list({ prefix: 'caption:' })).size, 1);
+
+  const reconnected = new TestSocket();
+  sockets.push(reconnected);
+  await relayRoom.webSocketMessage(reconnected, JSON.stringify({
+    type: 'auth', role: 'participant', tokenHash: await hashAudienceToken(joinSecret), clientId: 'phone-3',
+  }));
+  assert.equal(reconnected.messages[0].type, 'ready');
+  assert.equal(reconnected.messages[1].type, 'caption');
+  assert.deepEqual(
+    await decryptAudiencePayload(joinSecret, reconnected.messages[1].eventId, reconnected.messages[1]),
+    correctedPayload,
+  );
+
+  const beforeForbiddenPublish = secondParticipant.messages.length;
+  await relayRoom.webSocketMessage(participant, JSON.stringify({
+    type: 'caption',
+    eventId: 'caption-event-00000003',
+    captionId: 'forbidden',
+    captionSeq: 2,
+    persist: true,
+    ...encryptedCaption,
+  }));
+  assert.equal(secondParticipant.messages.length, beforeForbiddenPublish);
 });

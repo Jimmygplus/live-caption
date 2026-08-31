@@ -3,21 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>文字发言 · Live Caption</title>
+  <title>字幕直播间 · Live Caption</title>
   <link rel="stylesheet" href="./input.css" />
 </head>
 <body>
   <main>
     <header>
-      <span class="mark" aria-hidden="true">⌨</span>
+      <span class="mark" aria-hidden="true">◉</span>
       <div>
-        <h1>文字发言</h1>
-        <p>发送后会确认主持端是否已经显示。</p>
-        <p lang="en">Text input for non-speaking, Deaf, and hard-of-hearing people.</p>
+        <h1>字幕直播间</h1>
+        <p>实时查看原文和译文，也可以用文字参与现场。</p>
+        <p lang="en">Live captions and text participation for non-speaking, Deaf, and hard-of-hearing people.</p>
       </div>
     </header>
 
+    <section id="captionPanel" class="caption-panel" aria-labelledby="captionTitle">
+      <div class="caption-heading">
+        <h2 id="captionTitle">现场字幕</h2>
+        <span id="captionState">等待主持端开始</span>
+      </div>
+      <p id="captionEmpty" class="caption-empty">字幕开始后会实时显示在这里。</p>
+      <ol id="captionList" class="caption-list" aria-live="polite" aria-relevant="additions text"></ol>
+    </section>
+
     <form id="messageForm">
+      <h2>文字发言</h2>
       <label for="name">显示名称（选填）</label>
       <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
 
@@ -36,7 +46,7 @@
         <span>Ctrl / ⌘ + Enter 发送</span>
       </div>
 
-      <button id="sendBtn" type="submit">发送到现场字幕</button>
+      <button id="sendBtn" type="submit">发送到所有字幕屏幕</button>
     </form>
 
     <p id="status" role="status" aria-live="polite">正在连接会话……</p>

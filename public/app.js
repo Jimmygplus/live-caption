@@ -12,6 +12,7 @@ import { qrDataUrl } from './qr.js';
 import {
   decryptAudiencePayload,
   detectTypedLanguage,
+  encryptAudiencePayload,
   hashAudienceToken,
   randomAudienceSecret,
 } from './audience-crypto.js';
@@ -451,7 +452,7 @@ function showAudienceSession(session) {
     el.audienceQr.src = qrDataUrl(joinUrl);
     el.audienceQr.hidden = false;
     el.audienceHint.textContent = session.transport === 'relay'
-      ? '端到端加密通道已连接；让参与者用手机相机扫码，同一个二维码可供多人使用。'
+      ? '端到端加密字幕通道已连接；让参与者扫码，同一个二维码可供多人查看和发言。'
       : localOnlyUrl(joinUrl)
       ? '当前链接是 localhost，手机无法访问。请用局域网 IP 打开主持端，或在服务端设置 PUBLIC_URL 后重新创建。'
       : '让参与者用手机相机扫码；同一个二维码可供多人使用。';
@@ -460,7 +461,7 @@ function showAudienceSession(session) {
       session.transport !== 'relay' && localOnlyUrl(joinUrl),
     );
     el.audiencePrivacy.textContent = session.transport === 'relay'
-      ? '文字在手机端加密，中继只暂存密文；会话 6 小时自动失效，结束后二维码立即作废。'
+      ? '字幕与发言均为端到端加密；中继只暂存最近 100 条最终字幕的密文，会话 6 小时自动失效。'
       : '会话只保存在当前服务进程内，6 小时自动失效；结束后二维码立即作废。';
   } catch (error) {
     el.audienceQr.hidden = true;
@@ -473,6 +474,100 @@ function showAudienceSession(session) {
 function audienceMessageTime(message, session) {
   const baseline = app.startedAt || session.createdAt;
   return Math.max(0, message.at - baseline);
+}
+
+function audienceCaptionEventId() {
+  return `caption-${globalThis.crypto.randomUUID()}`;
+}
+
+function sendAudienceCaptionPayload(session, payload, persist) {
+  session.captionChain = session.captionChain.then(async () => {
+    if (
+      app.audience !== session
+      || session.closed
+      || !session.ready
+      || session.socket?.readyState !== WebSocket.OPEN
+    ) return;
+    const eventId = audienceCaptionEventId();
+    const encrypted = await encryptAudiencePayload(session.joinSecret, eventId, payload);
+    session.socket.send(JSON.stringify({
+      type: 'caption',
+      eventId,
+      captionId: payload.captionId,
+      captionSeq: payload.captionSeq,
+      persist,
+      ...encrypted,
+    }));
+    if (persist && session.pendingCaptions.get(payload.captionId)?.revision === payload.revision) {
+      session.pendingCaptions.delete(payload.captionId);
+    }
+  }).catch(() => {
+    if (persist) session.pendingCaptions.set(payload.captionId, payload);
+  });
+}
+
+function publishAudienceCaption(payload, { persist = false } = {}) {
+  const session = app.audience;
+  if (!session || session.transport !== 'relay' || session.closed) return;
+  const revision = (session.captionRevisions.get(payload.captionId) || 0) + 1;
+  session.captionRevisions.set(payload.captionId, revision);
+  const versioned = { ...payload, revision, updatedAt: Date.now() };
+  if (persist) session.pendingCaptions.set(payload.captionId, versioned);
+  sendAudienceCaptionPayload(session, versioned, persist);
+}
+
+function flushAudienceCaptions(session) {
+  for (const payload of session.pendingCaptions.values()) {
+    sendAudienceCaptionPayload(session, payload, true);
+  }
+}
+
+function publishAudienceDraft(orig, trans) {
+  const session = app.audience;
+  if (!session || session.transport !== 'relay' || session.closed) return;
+  session.pendingDraft = { orig, trans };
+  if (session.draftTimer) return;
+  session.draftTimer = setTimeout(() => {
+    session.draftTimer = null;
+    const draft = session.pendingDraft;
+    session.pendingDraft = null;
+    if (!draft || (draft.orig === session.lastDraftOrig && draft.trans === session.lastDraftTrans)) return;
+    session.lastDraftOrig = draft.orig;
+    session.lastDraftTrans = draft.trans;
+    publishAudienceCaption({
+      captionId: 'live-draft',
+      captionSeq: 0,
+      state: 'draft',
+      orig: draft.orig,
+      trans: draft.trans,
+      source: 'speech',
+      author: '',
+      speaker: stream.speaker ? speakerName(stream.speaker) : '',
+      startMs: (stream.segStartMs ?? 0) + app.msOffset,
+      replacesDraft: false,
+    });
+  }, 180);
+}
+
+function publishAudienceSegment(segment, state = 'final') {
+  const session = app.audience;
+  if (session?.draftTimer && segment.source === 'speech') {
+    clearTimeout(session.draftTimer);
+    session.draftTimer = null;
+    session.pendingDraft = null;
+  }
+  publishAudienceCaption({
+    captionId: `segment-${segment.id}`,
+    captionSeq: segment.id,
+    state,
+    orig: segment.orig,
+    trans: segment.trans,
+    source: segment.source,
+    author: segment.author || '',
+    speaker: segment.speaker ? speakerName(segment.speaker) : '',
+    startMs: segment.startMs,
+    replacesDraft: segment.source === 'speech',
+  }, { persist: true });
 }
 
 function receiveAudienceMessage(message, session) {
@@ -504,7 +599,7 @@ function scheduleRelayReconnect(session) {
   if (app.audience !== session || session.closed) return;
   session.failures += 1;
   const delay = Math.min(10_000, 500 * 2 ** session.failures);
-  if (session.failures === 1) setError('扫码文字输入暂时断开，正在自动重连。');
+  if (session.failures === 1) setError('字幕直播间暂时断开，正在自动重连。');
   session.reconnectTimer = setTimeout(() => {
     void connectRelayHost(session, true).catch(() => scheduleRelayReconnect(session));
   }, delay);
@@ -529,7 +624,9 @@ function connectRelayHost(session, initial = false) {
       if (message.type === 'ready') {
         clearTimeout(timeout);
         session.failures = 0;
-        if (el.errorText.textContent.startsWith('扫码文字输入暂时断开')) setError('');
+        session.ready = true;
+        flushAudienceCaptions(session);
+        if (el.errorText.textContent.startsWith('字幕直播间暂时断开')) setError('');
         if (!settled) {
           settled = true;
           resolve();
@@ -566,15 +663,16 @@ function connectRelayHost(session, initial = false) {
         session.closed = true;
         el.audienceBtn.classList.remove('active');
         el.audienceEnd.hidden = true;
-        el.audienceHint.textContent = '文字输入会话已结束，请重新创建二维码。';
+        el.audienceHint.textContent = '字幕直播间已结束，请重新创建二维码。';
         el.audienceHint.classList.add('warn');
       }
     });
     socket.addEventListener('close', () => {
       clearTimeout(timeout);
+      session.ready = false;
       if (!settled && initial) {
         settled = true;
-        reject(new Error('无法连接文字同步服务。'));
+        reject(new Error('无法连接字幕同步服务。'));
       } else if (!session.closed && app.audience === session) {
         scheduleRelayReconnect(session);
       }
@@ -655,8 +753,16 @@ async function createAudienceSession() {
         failures: 0,
         reconnectTimer: null,
         messageChain: Promise.resolve(),
+        captionChain: Promise.resolve(),
+        captionRevisions: new Map(),
+        pendingCaptions: new Map(),
+        pendingDraft: null,
+        draftTimer: null,
+        lastDraftOrig: '',
+        lastDraftTrans: '',
         seen: new Set(),
         socket: null,
+        ready: false,
         closed: false,
       };
       app.audience = session;
@@ -700,12 +806,13 @@ async function endAudienceSession() {
   session.closed = true;
   clearTimeout(session.pollTimer);
   clearTimeout(session.reconnectTimer);
+  clearTimeout(session.draftTimer);
   app.audience = null;
   el.audienceBtn.classList.remove('active');
   el.audienceSession.hidden = true;
   el.audienceEnd.hidden = true;
   el.audienceLoading.hidden = false;
-  el.audienceLoading.textContent = '文字输入会话已结束，旧二维码已经失效。';
+  el.audienceLoading.textContent = '字幕直播间已结束，旧二维码已经失效。';
   if (session.transport === 'relay') {
     if (session.socket?.readyState === WebSocket.OPEN) {
       session.socket.send(JSON.stringify({ type: 'close-room' }));
@@ -1279,6 +1386,7 @@ function renderSegment(segment) {
 function patchSegmentTranslation(segment, translation) {
   segment.trans = translation;
   persistSoon(); // the translation is part of the record, not just the view
+  publishAudienceSegment(segment, 'corrected');
   if (!segment.node) return;
   segment.node.querySelector('.translation').textContent = translation;
   segment.node.classList.toggle('no-translation', !translation);
@@ -1354,6 +1462,7 @@ function renderLive() {
   el.live.classList.toggle('no-translation', !trans);
   el.liveTranslation.textContent = trans;
   el.liveOriginal.textContent = orig;
+  publishAudienceDraft(orig, trans);
   scrollToBottom();
 }
 
@@ -1372,6 +1481,7 @@ function pushSegment({ orig, trans, startMs, endMs, speaker, source = 'speech', 
   };
   app.segments.push(segment);
   renderSegment(segment);
+  publishAudienceSegment(segment);
   updateCounter();
   persistSoon();
   el.placeholder.hidden = true;
