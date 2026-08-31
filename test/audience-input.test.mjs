@@ -4,6 +4,7 @@ import { webcrypto } from 'node:crypto';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { qrSvg } from '../public/qr.js';
+import { resolveAudioSourcePreference } from '../public/audio-source.js';
 import {
   decryptAudiencePayload,
   detectTypedLanguage,
@@ -162,6 +163,14 @@ test('local QR encoder returns a complete SVG and rejects oversized links', () =
   assert.match(svg, /viewBox="0 0 45 45"/);
   assert.match(svg, /<path d="M/);
   assert.throws(() => qrSvg(`https://example.com/${'x'.repeat(120)}`), /太长/);
+});
+
+test('audio source preference always migrates browser capture back to the microphone', () => {
+  assert.deepEqual(resolveAudioSourcePreference(null, ['mic-1']), { value: '', remove: false });
+  assert.deepEqual(resolveAudioSourcePreference('display', ['mic-1']), { value: '', remove: true });
+  assert.deepEqual(resolveAudioSourcePreference('', ['mic-1']), { value: '', remove: true });
+  assert.deepEqual(resolveAudioSourcePreference('mic-1', ['mic-1']), { value: 'mic-1', remove: false });
+  assert.deepEqual(resolveAudioSourcePreference('missing-mic', ['mic-1']), { value: '', remove: true });
 });
 
 test('audience relay payloads are encrypted, authenticated and language-aware', async () => {

@@ -9,6 +9,7 @@
 //               are translated through /api/translate.
 
 import { qrDataUrl } from './qr.js';
+import { resolveAudioSourcePreference } from './audio-source.js';
 import {
   decryptAudiencePayload,
   detectTypedLanguage,
@@ -2387,11 +2388,11 @@ el.length.addEventListener('change', () => {
   localStorage.setItem('lc.length', el.length.value);
 });
 
-// Only the two pseudo-devices are worth remembering — real device ids rotate.
+// Browser/system capture is intentionally session-only. Persisting it made a
+// returning user silently start from tab capture instead of the safe mic default.
 el.device.addEventListener('change', () => {
-  if (el.device.value === 'display' || el.device.value === '') {
-    localStorage.setItem('lc.source', el.device.value);
-  }
+  if (el.device.value === 'display' || el.device.value === '') localStorage.removeItem('lc.source');
+  else localStorage.setItem('lc.source', el.device.value);
 });
 
 el.gate.addEventListener('input', applyGate);
@@ -2715,7 +2716,12 @@ fillLanguageSelects();
 await loadConfig();
 await refreshDevices();
 const savedSource = localStorage.getItem('lc.source');
-if (savedSource !== null) el.device.value = savedSource;
+const sourcePreference = resolveAudioSourcePreference(
+  savedSource,
+  [...el.device.options].map((option) => option.value).filter((value) => value && value !== 'display'),
+);
+el.device.value = sourcePreference.value;
+if (sourcePreference.remove) localStorage.removeItem('lc.source');
 setStatus('idle', '未连接');
 offerRestore();
 
