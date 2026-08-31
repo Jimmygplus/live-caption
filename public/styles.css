@@ -235,6 +235,17 @@ button.primary[data-running="true"] {
   border-color: var(--accent-dim);
 }
 
+.tool-icon {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.19em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 button.danger { color: var(--danger); }
 
 /* ---------------------------------------------------------------- export menu */
@@ -291,7 +302,11 @@ main#stage {
 
 .segment {
   margin: 0 0 clamp(18px, 2.2vh, 34px);
-  animation: rise 0.22s ease-out;
+  /* Speech segments gain a coloured speaker rail only after diarization settles.
+     Reserve that exact space from the first interim word so finalization cannot
+     move a reader's fixation point horizontally. */
+  padding-inline-start: 14px;
+  border-inline-start: 3px solid transparent;
 }
 
 @keyframes rise {
@@ -333,9 +348,20 @@ main#stage {
   color: var(--dim);
   margin: 0 0 4px;
   letter-spacing: 0.04em;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
 }
 
-body.show-timestamps .segment .meta { display: block; }
+/* Time is independent of identity. Previously speaker captions forced the whole
+   "time · speaker" string visible, making the Time button appear broken. */
+body.show-timestamps .segment .meta,
+.segment[data-speaker] .meta,
+.segment[data-source="typed"] .meta { display: block; }
+
+.segment .timestamp { display: none; }
+body.show-timestamps .segment .timestamp { display: inline; }
+.segment .identity:empty { display: none; }
+body.show-timestamps .segment .timestamp + .identity:not(:empty)::before { content: " · "; }
 
 .segment.live .translation,
 .segment.live .original {
@@ -559,8 +585,7 @@ body.theater main#stage { padding-top: 6vh; }
 
 /* A left rule in the speaker's colour turns a transcript into a conversation. */
 .segment[data-speaker] {
-  padding-left: 14px;
-  border-left: 3px solid var(--speaker, var(--border));
+  border-inline-start-color: var(--speaker, var(--border));
 }
 
 .segment[data-speaker="0"] { --speaker: #5eead4; }
@@ -572,13 +597,10 @@ body.theater main#stage { padding-top: 6vh; }
 
 .segment[data-speaker] .meta { color: var(--speaker); opacity: 0.85; }
 
-/* Speaker labels carry the identity, so show them even without timestamps. */
-.segment[data-speaker] .meta { display: block; }
-
-body[data-view="cinema"] .segment[data-speaker],
-body[data-view="ticker"] .segment[data-speaker] {
-  border-left: none;
-  padding-left: 0;
+body[data-view="cinema"] .segment,
+body[data-view="ticker"] .segment {
+  border-inline-start: none;
+  padding-inline-start: 0;
 }
 
 .chip {
@@ -679,13 +701,12 @@ body[data-view="ticker"] .segment[data-speaker] {
 }
 
 .segment[data-source="typed"] {
-  padding-left: 14px;
-  border-left: 3px solid #fbbf24;
+  border-inline-start-color: #fbbf24;
   background: color-mix(in srgb, #fbbf24 6%, transparent);
 }
-.segment[data-source="typed"] .meta { display: block; color: #fbbf24; }
+.segment[data-source="typed"] .meta { color: #fbbf24; }
 body[data-view="cinema"] .segment[data-source="typed"],
-body[data-view="ticker"] .segment[data-source="typed"] { border-left: none; padding-left: 0; }
+body[data-view="ticker"] .segment[data-source="typed"] { border-inline-start: none; padding-inline-start: 0; }
 
 /* ---------------------------------------------------------------- floating window */
 
@@ -855,8 +876,13 @@ body.phone {
   --translation-size: 21px;
 }
 
-body.phone .segment { margin-bottom: 16px; }
-body.phone .segment[data-speaker] { padding-left: 10px; border-left-width: 2px; }
+body.phone .segment {
+  margin-bottom: 16px;
+  padding-inline-start: 10px;
+  border-inline-start-width: 2px;
+}
+body.phone[data-view="cinema"] .segment,
+body.phone[data-view="ticker"] .segment { padding-inline-start: 0; border-inline-start-width: 0; }
 
 /* The status bar keeps only what is glanceable while speaking. */
 body.phone #statusBar { padding: 7px 14px; font-size: 12px; gap: 9px; }

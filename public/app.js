@@ -165,6 +165,9 @@ const el = {
   stage: $('stage'),
   captions: $('captions'),
   live: $('live'),
+  liveMeta: $('liveMeta'),
+  liveTimestamp: $('liveTimestamp'),
+  liveIdentity: $('liveIdentity'),
   liveTranslation: $('liveTranslation'),
   liveOriginal: $('liveOriginal'),
   placeholder: $('placeholder'),
@@ -229,8 +232,10 @@ const stream = {
   interimOrig: '',
   interimTrans: '',
   segStartMs: null,
+  displayStartMs: null,
   lastEndMs: null,
   speaker: null,
+  previewSpeaker: null,
   language: null,   // language Soniox reports for the segment being built
   cutTimer: null,
   pendingCutAt: -1,
@@ -1365,7 +1370,15 @@ function renderSegment(segment) {
   const identity = segment.source === 'typed'
     ? `⌨ ${segment.author || '现场参与者'}`
     : segment.speaker ? speakerName(segment.speaker) : '';
-  meta.textContent = `${stamp(segment.startMs)}${identity ? ` · ${identity}` : ''}`;
+
+  const timestamp = document.createElement('span');
+  timestamp.className = 'timestamp mono';
+  timestamp.textContent = stamp(segment.startMs);
+
+  const identityNode = document.createElement('span');
+  identityNode.className = 'identity';
+  identityNode.textContent = identity;
+  meta.append(timestamp, identityNode);
 
   const orig = document.createElement('p');
   orig.className = 'original';
@@ -1457,10 +1470,20 @@ function renderLive() {
 
   if (!orig && !trans) {
     el.live.hidden = true;
+    el.live.removeAttribute('data-speaker');
     return;
   }
+
+  if (stream.displayStartMs === null) {
+    stream.displayStartMs = stream.segStartMs ?? Math.max(0, Date.now() - app.startedAt);
+  }
+  const liveSpeaker = stream.speaker || stream.previewSpeaker;
   el.live.hidden = false;
+  if (liveSpeaker) el.live.dataset.speaker = speakerSlot(liveSpeaker);
+  else el.live.removeAttribute('data-speaker');
   el.live.classList.toggle('no-translation', !trans);
+  el.liveTimestamp.textContent = stamp(stream.displayStartMs + app.msOffset);
+  el.liveIdentity.textContent = liveSpeaker ? speakerName(liveSpeaker) : '';
   el.liveTranslation.textContent = trans;
   el.liveOriginal.textContent = orig;
   publishAudienceDraft(orig, trans);
@@ -1541,6 +1564,7 @@ function commitSegment(cutIndex) {
     }
     stream.finalOrig = tail;
     stream.segStartMs = tail.trim() ? stream.lastEndMs : null;
+    stream.displayStartMs = stream.segStartMs;
     return;
   }
 
@@ -1559,6 +1583,7 @@ function commitSegment(cutIndex) {
   stream.finalOrig = tail;
   stream.finalTrans = '';
   stream.segStartMs = tail.trim() ? stream.lastEndMs : null;
+  stream.displayStartMs = stream.segStartMs;
 }
 
 // Decide whether the buffered final text is ready to become a segment.
@@ -1617,8 +1642,10 @@ function resetStream() {
   stream.interimOrig = '';
   stream.interimTrans = '';
   stream.segStartMs = null;
+  stream.displayStartMs = null;
   stream.lastEndMs = null;
   stream.speaker = null;
+  stream.previewSpeaker = null;
 }
 
 // ---------------------------------------------------------------- audio capture
@@ -1877,6 +1904,7 @@ function handleSonioxMessage(raw) {
         if (stream.segStartMs === null && typeof token.start_ms === 'number') {
           stream.segStartMs = token.start_ms;
         }
+        if (stream.displayStartMs === null) stream.displayStartMs = stream.segStartMs;
         if (typeof token.end_ms === 'number') stream.lastEndMs = token.end_ms;
         if (token.language) {
           stream.language = token.language;
@@ -1890,6 +1918,10 @@ function handleSonioxMessage(raw) {
       interimTrans += token.text;
     } else {
       interimOrig += token.text;
+      if (stream.displayStartMs === null && typeof token.start_ms === 'number') {
+        stream.displayStartMs = token.start_ms;
+      }
+      if (token.speaker) stream.previewSpeaker = token.speaker;
     }
   }
 
@@ -1962,7 +1994,16 @@ function startWebSpeech() {
       if (result.isFinal) {
         const line = text.trim();
         if (line) {
-          const segment = pushSegment({ orig: line, trans: '' });
+          const nowMs = Math.max(0, Date.now() - app.startedAt);
+          const segment = pushSegment({
+            orig: line,
+            trans: '',
+            startMs: stream.displayStartMs ?? nowMs,
+            endMs: nowMs,
+          });
+          // A following interim result belongs to the next utterance and must
+          // establish its own visual timestamp.
+          stream.displayStartMs = null;
           void queueTranslation(segment, line, el.sourceLang.value);
         }
       } else {
@@ -2592,9 +2633,15 @@ systemPrefersDark.addEventListener('change', () => {
   if ((localStorage.getItem('lc.theme') || 'system') === 'system') applyTheme('system');
 });
 
-el.timestampsBtn.addEventListener('click', () => {
-  const on = el.body.classList.toggle('show-timestamps');
+function setTimestamps(on) {
+  el.body.classList.toggle('show-timestamps', on);
   el.timestampsBtn.setAttribute('aria-pressed', String(on));
+  el.timestampsBtn.title = on ? '隐藏时间戳' : '显示时间戳';
+  localStorage.setItem('lc.timestamps', on ? '1' : '0');
+}
+
+el.timestampsBtn.addEventListener('click', () => {
+  setTimestamps(!el.body.classList.contains('show-timestamps'));
 });
 
 // Real fullscreen, not just hiding our own chrome — the browser UI goes away too.
@@ -2604,10 +2651,12 @@ function isFullscreen() {
 
 async function enterFullscreen() {
   const root = document.documentElement;
-  const request = root.requestFullscreen || root.webkitRequestFullscreen;
-  if (!request) return false;
+  if (!root.requestFullscreen && !root.webkitRequestFullscreen) return false;
   try {
-    await request.call(root, { navigationUI: 'hide' });
+    // WebKit's prefixed implementation does not accept the standard options
+    // object; passing it can make an otherwise supported fullscreen call fail.
+    if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' });
+    else await root.webkitRequestFullscreen();
     return true;
   } catch {
     return false; // denied or unsupported — fall back to chrome-hiding only
@@ -2701,6 +2750,7 @@ for (const [input, cssVar, key] of [
 }
 
 applyTheme(localStorage.getItem('lc.theme') || 'system');
+setTimestamps(localStorage.getItem('lc.timestamps') === '1');
 
 applyLayout();
 setLocked(localStorage.getItem('lc.locked') !== '0');

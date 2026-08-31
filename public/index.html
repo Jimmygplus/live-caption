@@ -102,8 +102,17 @@
     <button id="pipBtn" class="ghost" type="button" hidden title="浮窗字幕：独立小窗口，置顶在其他应用之上">⧉<span class="lbl">浮窗</span></button>
     <button id="lockBtn" class="ghost" type="button" aria-pressed="true" title="锁定最新：始终停在最新字幕，向上滚动自动解锁">📌<span class="lbl">锁定</span></button>
     <button id="themeBtn" class="ghost" type="button" title="主题：跟随系统 / 亮色 / 暗色"><span id="themeIcon">🖥</span><span class="lbl" id="themeLabel">系统</span></button>
-    <button id="timestampsBtn" class="ghost" type="button" aria-pressed="false" title="显示/隐藏时间戳与发言人">🕑<span class="lbl">时间</span></button>
-    <button id="theaterBtn" class="ghost" type="button" aria-pressed="false" title="全屏 + 剧场模式：只留字幕（Esc 退出）">⛶<span class="lbl">全屏</span></button>
+    <button id="timestampsBtn" class="ghost" type="button" aria-pressed="false" title="显示时间戳">
+      <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="8.5"></circle>
+        <path d="M12 7.5v5l3.5 2"></path>
+      </svg><span class="lbl">时间</span>
+    </button>
+    <button id="theaterBtn" class="ghost" type="button" aria-pressed="false" title="全屏 + 剧场模式：只留字幕（Esc 退出）">
+      <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M8.5 4H4v4.5M15.5 4H20v4.5M20 15.5V20h-4.5M8.5 20H4v-4.5"></path>
+      </svg><span class="lbl">全屏</span>
+    </button>
 
     <details class="menu" id="exportMenu">
       <summary class="ghost" title="导出记录与会前自检">⬇<span class="lbl">导出</span></summary>
@@ -131,6 +140,9 @@
   <ol id="captions"></ol>
 
   <div id="live" class="segment live" hidden>
+    <p class="meta" id="liveMeta">
+      <span class="timestamp mono" id="liveTimestamp"></span><span class="identity" id="liveIdentity"></span>
+    </p>
     <p class="original" id="liveOriginal"></p>
     <p class="translation" id="liveTranslation"></p>
   </div>
