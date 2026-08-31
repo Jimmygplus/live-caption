@@ -2516,7 +2516,7 @@ el.audienceCopy.addEventListener('click', async () => {
 });
 
 el.audienceEnd.addEventListener('click', () => {
-  if (confirm('结束后当前二维码会立即失效。确定结束文字输入吗？')) {
+  if (confirm('结束后当前二维码会立即失效。确定结束字幕直播间吗？')) {
     void endAudienceSession();
   }
 });
