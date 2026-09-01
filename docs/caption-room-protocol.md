@@ -19,10 +19,14 @@ This document is the durable handoff for the encrypted QR caption room. GitHub I
 4. QR clients upsert by `captionId`, ignore stale revisions, and remove `live-draft` when a final speech caption arrives.
 5. Participant text is encrypted to the host. The host validates and renders it, publishes it as a typed final caption, then acknowledges the participant message.
 6. Reconnecting QR clients receive at most 100 recent final ciphertext envelopes. Drafts are never replayed.
+7. Host clients send a heartbeat every 10 seconds. The relay marks the room `away` after 30 seconds without a heartbeat, while keeping encrypted participant messages queued for host recovery.
+8. A host refresh in the same tab restores the room capability from `sessionStorage`; the capability is never written to `localStorage`.
 
 ## Roles and messages
 
 - Participant may send `message`; host may send `ack`, `caption`, and `close-room`.
+- Host may send `heartbeat`; relay sends `host-status` with `online` or `away` to participants.
+- `ready` includes the room expiry and current host status. `queued` includes the host status at acceptance time so the participant can distinguish immediate delivery from offline queueing.
 - Only the host can publish `caption` envelopes.
 - `caption` exposes `eventId`, `captionId`, `captionSeq`, `persist`, `iv`, and `ciphertext` to the relay.
 - Encrypted payload fields are `captionId`, `captionSeq`, `revision`, `state`, `orig`, `trans`, `source`, `author`, `speaker`, `startMs`, `replacesDraft`, and `updatedAt`.
@@ -33,4 +37,6 @@ This document is the durable handoff for the encrypted QR caption room. GitHub I
 - Never put vendor keys or the host capability into the QR URL.
 - Do not let participant clients publish captions directly.
 - Keep replay bounded and ciphertext-only.
+- Presence is room-level only. Do not expose host identity, participant identity, stable device identifiers, or plaintext as presence metadata.
+- Host recovery material is tab-scoped and expires with the room. Closing the tab intentionally does not create a long-lived host credential.
 - Preserve the legacy Node text-input route until it is intentionally replaced.

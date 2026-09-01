@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { webcrypto } from 'node:crypto';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { qrSvg } from '../public/qr.js';
 import { resolveAudioSourcePreference } from '../public/audio-source.js';
@@ -329,4 +330,118 @@ test('relay room authenticates peers, syncs encrypted captions and acknowledges 
     ...encryptedCaption,
   }));
   assert.equal(secondParticipant.messages.length, beforeForbiddenPublish);
+});
+
+test('relay reports host presence, preserves queued speech and closes every participant', async () => {
+  const hostSecret = randomAudienceSecret();
+  const joinSecret = randomAudienceSecret();
+  const sockets = [];
+  const state = {
+    storage: new MemoryStorage(),
+    getWebSockets: () => sockets.filter((socket) => !socket.closed),
+  };
+  const room = new AudienceRoom(state);
+  await room.fetch(new Request('https://audience-room/internal/init', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: 'PRESENCE1234',
+      hostHash: await hashAudienceToken(hostSecret),
+      joinHash: await hashAudienceToken(joinSecret),
+      expiresAt: Date.now() + 60_000,
+    }),
+  }));
+
+  const participant = new TestSocket();
+  sockets.push(participant);
+  await room.webSocketMessage(participant, JSON.stringify({
+    type: 'auth', role: 'participant', tokenHash: await hashAudienceToken(joinSecret), clientId: 'phone-presence',
+  }));
+  assert.equal(participant.messages[0].hostStatus, 'away');
+
+  const firstHost = new TestSocket();
+  sockets.push(firstHost);
+  await room.webSocketMessage(firstHost, JSON.stringify({
+    type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
+  }));
+  assert.deepEqual(participant.messages.at(-1), { type: 'host-status', status: 'online' });
+
+  const secondHost = new TestSocket();
+  sockets.push(secondHost);
+  const announcementsBeforeHandoff = participant.messages.length;
+  await room.webSocketMessage(secondHost, JSON.stringify({
+    type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
+  }));
+  firstHost.close(1006, 'network lost');
+  await room.webSocketClose(firstHost);
+  assert.equal(participant.messages.length, announcementsBeforeHandoff);
+
+  secondHost.close(1006, 'last host lost');
+  await room.webSocketClose(secondHost);
+  assert.deepEqual(participant.messages.at(-1), { type: 'host-status', status: 'away' });
+
+  const messageId = 'message-presence-0001';
+  const encrypted = await encryptAudiencePayload(joinSecret, messageId, {
+    text: '请让我补充一句。', name: '', language: 'zh', sentAt: Date.now(),
+  });
+  await room.webSocketMessage(participant, JSON.stringify({
+    type: 'message', messageId, ...encrypted,
+  }));
+  assert.equal(participant.messages.at(-1).type, 'queued');
+  assert.equal(participant.messages.at(-1).hostStatus, 'away');
+
+  const recoveredHost = new TestSocket();
+  sockets.push(recoveredHost);
+  await room.webSocketMessage(recoveredHost, JSON.stringify({
+    type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
+  }));
+  assert.equal(recoveredHost.messages[0].hostStatus, 'online');
+  assert.equal(recoveredHost.messages[1].messageId, messageId);
+  await room.webSocketMessage(recoveredHost, JSON.stringify({ type: 'ack', messageId }));
+  assert.equal(participant.messages.at(-1).type, 'displayed');
+
+  await room.webSocketMessage(recoveredHost, JSON.stringify({ type: 'close-room' }));
+  assert.equal(participant.messages.at(-1).type, 'closed');
+  assert.equal(participant.closed.reason, 'Room closed');
+});
+
+test('relay expiry announces a permanent close before deleting room storage', async () => {
+  const hostSecret = randomAudienceSecret();
+  const joinSecret = randomAudienceSecret();
+  const participant = new TestSocket();
+  const state = {
+    storage: new MemoryStorage(),
+    getWebSockets: () => [participant],
+  };
+  const room = new AudienceRoom(state);
+  await room.fetch(new Request('https://audience-room/internal/init', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: 'EXPIRY123456',
+      hostHash: await hashAudienceToken(hostSecret),
+      joinHash: await hashAudienceToken(joinSecret),
+      expiresAt: Date.now() - 1,
+    }),
+  }));
+  await room.alarm();
+  assert.equal(participant.messages.at(-1).type, 'closed');
+  assert.equal(participant.closed.reason, 'Room expired');
+  assert.equal(await state.storage.get('meta'), undefined);
+});
+
+test('participant page keeps speaking first and full captions available on demand', async () => {
+  const [html, css, inputScript, hostScript] = await Promise.all([
+    readFile(new URL('../public/input.html', import.meta.url), 'utf8'),
+    readFile(new URL('../public/input.css', import.meta.url), 'utf8'),
+    readFile(new URL('../public/input.js', import.meta.url), 'utf8'),
+    readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+  ]);
+  assert.ok(html.indexOf('id="messageForm"') < html.indexOf('id="captionPanel"'));
+  assert.match(html, /id="hostPresence"/);
+  assert.match(html, /<details class="participant-options">/);
+  assert.match(html, /id="captionToggle"[^>]+aria-expanded="false"/);
+  assert.match(css, /\.caption-list:not\(\.expanded\).*nth-last-child/);
+  assert.match(inputScript, /host-status/);
+  assert.match(inputScript, /已排队，等待主持人恢复/);
+  assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
+  assert.doesNotMatch(hostScript, /localStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
 });

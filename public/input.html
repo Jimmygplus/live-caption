@@ -8,51 +8,76 @@
 </head>
 <body>
   <main>
-    <header>
+    <header class="app-header">
       <span class="mark" aria-hidden="true">◉</span>
       <div>
         <h1>字幕直播间</h1>
-        <p>实时查看原文和译文，也可以用文字参与现场。</p>
-        <p lang="en">Live captions and text participation for non-speaking, Deaf, and hard-of-hearing people.</p>
+        <p>看懂现场，也让现场听见你。</p>
+        <p lang="en">Follow the room and have your say.</p>
       </div>
     </header>
 
-    <section id="captionPanel" class="caption-panel" aria-labelledby="captionTitle">
-      <div class="caption-heading">
-        <h2 id="captionTitle">现场字幕</h2>
-        <span id="captionState">等待主持端开始</span>
+    <section id="hostPresence" class="presence" data-state="connecting" aria-live="polite">
+      <span class="presence-dot" aria-hidden="true"></span>
+      <div>
+        <strong id="presenceTitle">正在连接现场</strong>
+        <span id="presenceDetail">连接后即可发送文字发言</span>
       </div>
-      <p id="captionEmpty" class="caption-empty">字幕开始后会实时显示在这里。</p>
-      <ol id="captionList" class="caption-list" aria-live="polite" aria-relevant="additions text"></ol>
     </section>
 
-    <form id="messageForm">
-      <h2>文字发言</h2>
-      <label for="name">显示名称（选填）</label>
-      <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
-
-      <label for="language">输入语言</label>
-      <select id="language">
-        <option value="auto" selected>自动判断</option>
-        <option value="zh">中文</option>
-        <option value="en">English</option>
-      </select>
-
-      <label for="message">想表达的内容</label>
-      <textarea id="message" maxlength="500" rows="7" required autofocus
-        placeholder="在这里输入，现场会看到原文……"></textarea>
-      <div class="between">
-        <span id="count">0 / 500</span>
-        <span>Ctrl / ⌘ + Enter 发送</span>
+    <form id="messageForm" class="composer">
+      <div class="composer-heading">
+        <div>
+          <p class="eyebrow">文字发言</p>
+          <h2>你想让现场知道什么？</h2>
+        </div>
+        <span class="secure-badge">端到端加密</span>
       </div>
 
-      <button id="sendBtn" type="submit">发送到所有字幕屏幕</button>
+      <details class="participant-options">
+        <summary>名称与输入语言 <span>选填</span></summary>
+        <div class="option-fields">
+          <label for="name">显示名称</label>
+          <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
+
+          <label for="language">输入语言</label>
+          <select id="language">
+            <option value="auto" selected>自动判断</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </details>
+
+      <label class="sr-only" for="message">想表达的内容</label>
+      <textarea id="message" maxlength="500" rows="5" required autofocus
+        placeholder="输入你想说的话……"></textarea>
+      <div class="between">
+        <span id="count">0 / 500</span>
+        <span class="shortcut">Ctrl / ⌘ + Enter 发送</span>
+      </div>
+
+      <button id="sendBtn" type="submit">发送到现场</button>
+      <p id="status" role="status" aria-live="polite">正在连接安全通道……</p>
+      <section id="lastSent" aria-live="polite" hidden>
+        <strong id="lastState">正在送达</strong>
+        <p id="lastText"></p>
+      </section>
     </form>
 
-    <p id="status" role="status" aria-live="polite">正在连接会话……</p>
-    <section id="lastSent" hidden>
-      <strong id="lastState">已发送</strong>
-      <p id="lastText"></p>
+    <section id="captionPanel" class="caption-panel" aria-labelledby="captionTitle">
+      <div class="caption-heading">
+        <div>
+          <p class="eyebrow">现场上下文</p>
+          <h2 id="captionTitle">最近字幕</h2>
+        </div>
+        <span id="captionState">等待字幕</span>
+      </div>
+      <p id="captionEmpty" class="caption-empty">主持人开始后，最近字幕会显示在这里。</p>
+      <ol id="captionList" class="caption-list" aria-live="polite" aria-relevant="additions text"></ol>
+      <button id="captionToggle" class="caption-toggle" type="button" aria-expanded="false" aria-controls="captionList" hidden>
+        查看全部字幕
+      </button>
     </section>
   </main>
   <script type="module" src="./input.js"></script>

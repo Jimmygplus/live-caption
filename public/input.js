@@ -19,6 +19,10 @@ const captionPanel = document.querySelector('#captionPanel');
 const captionList = document.querySelector('#captionList');
 const captionEmpty = document.querySelector('#captionEmpty');
 const captionState = document.querySelector('#captionState');
+const captionToggle = document.querySelector('#captionToggle');
+const hostPresence = document.querySelector('#hostPresence');
+const presenceTitle = document.querySelector('#presenceTitle');
+const presenceDetail = document.querySelector('#presenceDetail');
 
 const params = new URLSearchParams(location.hash.slice(1));
 let savedRelayRoom = {};
@@ -40,6 +44,11 @@ let reconnectAttempt = 0;
 let reconnectTimer = null;
 let joinTokenHash = '';
 let captionChain = Promise.resolve();
+let hostStatus = 'connecting';
+let roomClosed = false;
+let sending = false;
+let expiresAt = Number(savedRelayRoom.expiresAt) || 0;
+let expiryTimer = null;
 const captions = new Map();
 const pendingKey = `lc.audience.pending.${room}`;
 let savedPending = [];
@@ -47,9 +56,16 @@ try { savedPending = JSON.parse(sessionStorage.getItem(pendingKey) || '[]'); } c
 const pending = new Map(savedPending.map((item) => [item.messageId, item]));
 
 if (params.get('r') && params.get('s')) {
-  sessionStorage.setItem('lc.audience.room', JSON.stringify({ room, joinSecret }));
+  sessionStorage.setItem('lc.audience.room', JSON.stringify({ room, joinSecret, expiresAt }));
   history.replaceState(null, '', `${location.pathname}${location.search}`);
 }
+
+// Scanning a later room can navigate the existing tab to the same page with a
+// different fragment. Browsers do not reload for fragment-only navigation, so
+// explicitly restart the client before it can remain attached to the old room.
+window.addEventListener('hashchange', () => {
+  if (location.hash) location.reload();
+});
 
 function savePending() {
   sessionStorage.setItem(pendingKey, JSON.stringify([...pending.values()]));
@@ -58,6 +74,50 @@ function savePending() {
 function setStatus(text, kind = '') {
   status.textContent = text;
   status.className = kind;
+}
+
+function updateSendButton() {
+  sendBtn.disabled = sending || roomClosed || (relayMode && !ready);
+  sendBtn.textContent = hostStatus === 'away' ? '排队发送' : '发送到现场';
+}
+
+function setPresence(next) {
+  hostStatus = next;
+  hostPresence.dataset.state = next;
+  const copy = {
+    connecting: ['正在连接现场', '连接恢复后即可继续发送'],
+    online: ['主持人在线', '你的发言会即时送达现场'],
+    away: ['主持人暂时离开', '仍可发送；内容会加密排队，恢复后自动送达'],
+    closed: ['直播间已结束', '这个二维码已经失效'],
+  }[next] || ['正在连接现场', '请稍候'];
+  [presenceTitle.textContent, presenceDetail.textContent] = copy;
+  updateSendButton();
+}
+
+function finishRoom(message = '本次字幕直播间已经结束。') {
+  roomClosed = true;
+  ready = false;
+  clearTimeout(reconnectTimer);
+  clearTimeout(expiryTimer);
+  if (socket?.readyState === WebSocket.OPEN) socket.close(1000, 'Room ended');
+  sessionStorage.removeItem('lc.audience.room');
+  form.hidden = true;
+  captionState.textContent = '直播间已结束';
+  setPresence('closed');
+  setStatus(message, 'error');
+}
+
+function armRoomExpiry(value) {
+  expiresAt = Number(value) || expiresAt;
+  clearTimeout(expiryTimer);
+  if (!expiresAt) return;
+  sessionStorage.setItem('lc.audience.room', JSON.stringify({ room, joinSecret, expiresAt }));
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    finishRoom('本次字幕直播间已经到期。');
+    return;
+  }
+  expiryTimer = setTimeout(() => finishRoom('本次字幕直播间已经到期。'), remaining);
 }
 
 function setLast(message, state) {
@@ -85,6 +145,16 @@ function removeCaption(captionId) {
   const current = captions.get(captionId);
   current?.node.remove();
   captions.delete(captionId);
+}
+
+function updateCaptionToggle() {
+  const expandable = captionList.children.length > 2;
+  captionToggle.hidden = !expandable;
+  if (!expandable) {
+    captionList.classList.remove('expanded');
+    captionToggle.setAttribute('aria-expanded', 'false');
+    captionToggle.textContent = '查看全部字幕';
+  }
 }
 
 function renderCaption(payload) {
@@ -126,6 +196,7 @@ function renderCaption(payload) {
     if (id) captions.delete(id);
     oldest.remove();
   }
+  updateCaptionToggle();
   if (shouldFollow) captionList.scrollTop = captionList.scrollHeight;
 }
 
@@ -157,9 +228,11 @@ async function receiveCaption(envelope) {
 }
 
 async function connectRelay() {
-  if (!relayMode || !AUDIENCE_RELAY_URL || socket?.readyState === WebSocket.OPEN) return;
+  if (!relayMode || !AUDIENCE_RELAY_URL || roomClosed || socket?.readyState === WebSocket.OPEN) return;
+  if (expiresAt && expiresAt <= Date.now()) return finishRoom('本次字幕直播间已经到期。');
   clearTimeout(reconnectTimer);
   ready = false;
+  setPresence('connecting');
   setStatus(reconnectAttempt ? '正在重新连接安全通道……' : '正在连接安全通道……');
   if (!joinTokenHash) joinTokenHash = await hashAudienceToken(joinSecret);
   socket = new WebSocket(relayWebSocketUrl());
@@ -172,15 +245,34 @@ async function connectRelay() {
     if (message.type === 'ready') {
       ready = true;
       reconnectAttempt = 0;
-      captionState.textContent = '已连接';
-      setStatus('安全通道已连接，可以看字幕或输入文字。', 'ok');
+      armRoomExpiry(message.expiresAt);
+      if (roomClosed) return;
+      setPresence(message.hostStatus === 'online' ? 'online' : 'away');
+      captionState.textContent = captions.size ? '已同步' : '等待字幕';
+      setStatus(
+        hostStatus === 'online'
+          ? '可以发言，发送后会出现在现场字幕中。'
+          : '主持人暂时离开；仍可发送并排队等待恢复。',
+        hostStatus === 'online' ? 'ok' : '',
+      );
       for (const item of pending.values()) socket.send(JSON.stringify(item.envelope));
     } else if (message.type === 'caption') {
       captionChain = captionChain.then(() => receiveCaption(message));
+    } else if (message.type === 'host-status') {
+      setPresence(message.status === 'online' ? 'online' : 'away');
+      if (hostStatus === 'online') {
+        setStatus(pending.size ? '主持人已恢复，排队内容正在送达。' : '主持人在线，可以发言。', 'ok');
+      } else {
+        setStatus('主持人暂时离开；仍可发送并排队等待恢复。');
+      }
     } else if (message.type === 'queued') {
       const item = pending.get(message.messageId);
-      if (item) setLast(item, '已送达，等待主持端显示');
-      setStatus('已送达，等待主持端显示。', 'ok');
+      if (message.hostStatus) setPresence(message.hostStatus === 'online' ? 'online' : 'away');
+      const queuedState = hostStatus === 'online'
+        ? '已送达，等待主持人显示'
+        : '已排队，等待主持人恢复';
+      if (item) setLast(item, queuedState);
+      setStatus(`${queuedState}。`, hostStatus === 'online' ? 'ok' : '');
     } else if (message.type === 'displayed') {
       const item = pending.get(message.messageId);
       if (!item) return;
@@ -189,10 +281,7 @@ async function connectRelay() {
       savePending();
       setStatus('主持端已接收并显示。', 'ok');
     } else if (message.type === 'closed') {
-      ready = false;
-      form.hidden = true;
-      captionState.textContent = '直播间已结束';
-      setStatus('本次字幕直播间已经结束。', 'error');
+      finishRoom();
     } else if (message.type === 'error') {
       if (message.code === 'invalid_message') {
         pending.delete(message.messageId);
@@ -203,12 +292,14 @@ async function connectRelay() {
   });
   socket.addEventListener('close', () => {
     ready = false;
-    if (form.hidden) return;
+    if (roomClosed || form.hidden) return;
+    if (expiresAt && expiresAt <= Date.now()) return finishRoom('本次字幕直播间已经到期。');
     reconnectAttempt += 1;
     const delay = Math.min(10_000, 500 * 2 ** reconnectAttempt);
     reconnectTimer = setTimeout(() => {
       void connectRelay().catch(() => setStatus('无法恢复安全通道，请稍后重试。', 'error'));
     }, delay);
+    setPresence('connecting');
     setStatus('连接暂时中断，消息会在重连后继续发送。', 'error');
   });
   socket.addEventListener('error', () => socket.close());
@@ -221,11 +312,21 @@ if (!room || (!legacyToken && !joinSecret)) {
   form.hidden = true;
   setStatus('文字同步服务尚未配置，请联系主持人。', 'error');
 } else if (relayMode) {
-  void connectRelay().catch(() => setStatus('无法连接安全通道，请重新扫描二维码。', 'error'));
+  if (expiresAt && expiresAt <= Date.now()) finishRoom('本次字幕直播间已经到期。');
+  else void connectRelay().catch(() => setStatus('无法连接安全通道，请重新扫描二维码。', 'error'));
 } else {
   captionPanel.hidden = true;
+  ready = true;
+  setPresence('online');
   setStatus('已连接，可以输入。', 'ok');
 }
+
+captionToggle.addEventListener('click', () => {
+  const expanded = captionList.classList.toggle('expanded');
+  captionToggle.setAttribute('aria-expanded', String(expanded));
+  captionToggle.textContent = expanded ? '收起，只看最近字幕' : '查看全部字幕';
+  if (expanded) captionList.scrollTop = captionList.scrollHeight;
+});
 
 messageInput.addEventListener('input', () => {
   count.textContent = `${messageInput.value.length} / 500`;
@@ -246,9 +347,10 @@ messageInput.addEventListener('keydown', (event) => {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = messageInput.value.trim();
-  if (!text || sendBtn.disabled) return;
+  if (!text || sending || roomClosed || (relayMode && !ready)) return;
 
-  sendBtn.disabled = true;
+  sending = true;
+  updateSendButton();
   setStatus('正在发送……');
   const messageId = makeClientId();
   const item = {
@@ -267,7 +369,7 @@ form.addEventListener('submit', async (event) => {
       savePending();
       socket.send(JSON.stringify(item.envelope));
       setLast(item, '正在送达');
-      setStatus('正在等待主持端确认……');
+      setStatus(hostStatus === 'away' ? '正在加密并排队……' : '正在等待主持人确认……');
     } else {
       const response = await fetch(`./api/audience/sessions/${encodeURIComponent(room)}/messages`, {
         method: 'POST',
@@ -291,6 +393,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     setStatus(error.message, 'error');
   } finally {
-    sendBtn.disabled = false;
+    sending = false;
+    updateSendButton();
   }
 });

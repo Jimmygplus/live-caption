@@ -2,6 +2,7 @@ const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_MESSAGES = 200;
 const MAX_CAPTIONS = 100;
 const MAX_CIPHERTEXT = 6_000;
+const HOST_AWAY_MS = 30_000;
 const ALLOWED_ORIGINS = new Set([
   'https://jimmygplus.github.io',
   'http://localhost:5175',
@@ -82,6 +83,23 @@ export default {
       return json(request, { id, expiresAt }, 201);
     }
 
+    const closeMatch = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{8,32})\/close$/);
+    if (closeMatch && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      if (!/^[0-9a-f]{64}$/.test(body.hostHash || '')) {
+        return json(request, { error: 'Invalid room credential.' }, 400);
+      }
+      const roomId = env.AUDIENCE_ROOMS.idFromName(closeMatch[1]);
+      const closed = await env.AUDIENCE_ROOMS.get(roomId).fetch('https://audience-room/internal/close', {
+        method: 'POST',
+        body: JSON.stringify({ hostHash: body.hostHash }),
+      });
+      if (closed.status === 401) return json(request, { error: 'Invalid room credential.' }, 401);
+      if (closed.status === 404) return json(request, { error: 'Room not found.' }, 404);
+      return json(request, { closed: true });
+    }
+
     const match = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{8,32})\/ws$/);
     if (match && request.method === 'GET' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
       const roomId = env.AUDIENCE_ROOMS.idFromName(match[1]);
@@ -116,10 +134,21 @@ export class AudienceRoom {
         messageCount: 0,
         nextCaptionSeq: 1,
         captionCount: 0,
+        hostOnline: false,
+        hostSeenAt: 0,
         closed: false,
       };
       await this.state.storage.put('meta', meta);
-      await this.state.storage.setAlarm(meta.expiresAt);
+      await this.scheduleAlarm(meta);
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === '/internal/close' && request.method === 'POST') {
+      const meta = await this.state.storage.get('meta');
+      if (!meta) return new Response('Room not found.', { status: 404 });
+      const body = await request.json();
+      if (body.hostHash !== meta.hostHash) return new Response('Invalid credential.', { status: 401 });
+      await this.closeRoom(meta);
       return new Response(null, { status: 204 });
     }
 
@@ -168,6 +197,7 @@ export class AudienceRoom {
         return socket.close(1008, 'Invalid room token');
       }
 
+      const hostWasOnline = this.currentHostStatus(meta) === 'online';
       attachment = {
         authenticated: true,
         role: message.role,
@@ -175,9 +205,18 @@ export class AudienceRoom {
         recent: [],
       };
       socket.serializeAttachment(attachment);
-      socket.send(JSON.stringify({ type: 'ready', expiresAt: meta.expiresAt }));
-      if (message.role === 'host') await this.replayPending(socket);
-      if (message.role === 'participant') await this.replayCaptions(socket);
+      if (message.role === 'host') {
+        await this.markHostOnline(meta, !hostWasOnline);
+        socket.send(JSON.stringify({ type: 'ready', expiresAt: meta.expiresAt, hostStatus: 'online' }));
+        await this.replayPending(socket);
+      } else {
+        socket.send(JSON.stringify({
+          type: 'ready',
+          expiresAt: meta.expiresAt,
+          hostStatus: this.currentHostStatus(meta),
+        }));
+        await this.replayCaptions(socket);
+      }
       return;
     }
 
@@ -189,6 +228,9 @@ export class AudienceRoom {
     }
     if (attachment.role === 'host' && message.type === 'caption') {
       return this.acceptCaption(message, meta);
+    }
+    if (attachment.role === 'host' && message.type === 'heartbeat') {
+      return this.markHostOnline(meta, this.currentHostStatus(meta) !== 'online');
     }
     if (attachment.role === 'host' && message.type === 'close-room') {
       return this.closeRoom(meta);
@@ -219,7 +261,11 @@ export class AudienceRoom {
     }
     const existingKey = await this.state.storage.get(`id:${messageId}`);
     if (existingKey) {
-      socket.send(JSON.stringify({ type: 'queued', messageId }));
+      socket.send(JSON.stringify({
+        type: 'queued',
+        messageId,
+        hostStatus: this.currentHostStatus(meta),
+      }));
       return;
     }
 
@@ -237,8 +283,46 @@ export class AudienceRoom {
     };
     meta.messageCount += 1;
     await this.state.storage.put({ meta, [key]: envelope, [`id:${messageId}`]: key });
-    socket.send(JSON.stringify({ type: 'queued', messageId, seq }));
+    socket.send(JSON.stringify({
+      type: 'queued',
+      messageId,
+      seq,
+      hostStatus: this.currentHostStatus(meta),
+    }));
     this.broadcastToHosts(envelope);
+  }
+
+  currentHostStatus(meta) {
+    return meta.hostOnline && Date.now() - meta.hostSeenAt < HOST_AWAY_MS ? 'online' : 'away';
+  }
+
+  hasAuthenticatedHost(excluding = null) {
+    return this.state.getWebSockets().some((peerSocket) => {
+      if (peerSocket === excluding) return false;
+      const peer = peerSocket.deserializeAttachment();
+      return peer?.authenticated && peer.role === 'host';
+    });
+  }
+
+  async scheduleAlarm(meta) {
+    const presenceDeadline = meta.hostOnline ? meta.hostSeenAt + HOST_AWAY_MS : meta.expiresAt;
+    await this.state.storage.setAlarm(Math.min(meta.expiresAt, presenceDeadline));
+  }
+
+  async markHostOnline(meta, announce = false) {
+    meta.hostOnline = true;
+    meta.hostSeenAt = Date.now();
+    await this.state.storage.put('meta', meta);
+    await this.scheduleAlarm(meta);
+    if (announce) this.broadcastToParticipants({ type: 'host-status', status: 'online' });
+  }
+
+  async markHostAway(meta) {
+    if (!meta.hostOnline) return;
+    meta.hostOnline = false;
+    await this.state.storage.put('meta', meta);
+    await this.scheduleAlarm(meta);
+    this.broadcastToParticipants({ type: 'host-status', status: 'away' });
   }
 
   async acknowledgeMessage(messageIdValue) {
@@ -361,8 +445,30 @@ export class AudienceRoom {
     }
   }
 
+  async webSocketClose(socket) {
+    const peer = socket.deserializeAttachment();
+    if (!peer?.authenticated || peer.role !== 'host' || this.hasAuthenticatedHost(socket)) return;
+    const meta = await this.state.storage.get('meta');
+    if (meta && !meta.closed && meta.expiresAt > Date.now()) await this.markHostAway(meta);
+  }
+
+  async webSocketError(socket) {
+    await this.webSocketClose(socket);
+    try { socket.close(1011, 'WebSocket error'); } catch {}
+  }
+
   async alarm() {
-    for (const socket of this.state.getWebSockets()) socket.close(1000, 'Room expired');
-    await this.state.storage.deleteAll();
+    const meta = await this.state.storage.get('meta');
+    if (!meta) return;
+    if (meta.closed || meta.expiresAt <= Date.now()) {
+      for (const socket of this.state.getWebSockets()) {
+        socket.send(JSON.stringify({ type: 'closed' }));
+        socket.close(1000, 'Room expired');
+      }
+      await this.state.storage.deleteAll();
+      return;
+    }
+    if (this.currentHostStatus(meta) === 'away') await this.markHostAway(meta);
+    else await this.scheduleAlarm(meta);
   }
 }

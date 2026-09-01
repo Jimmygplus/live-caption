@@ -427,6 +427,77 @@ async function loadConfig() {
 // The QR page and this host page share no vendor credentials. Server mode uses
 // a local in-memory room; the static deployment uses an expiring encrypted relay.
 
+const AUDIENCE_HOST_SESSION_KEY = 'lc.audience.host-session.v1';
+
+function makeRelayAudienceSession(data) {
+  return {
+    ...data,
+    transport: 'relay',
+    createdAt: Number(data.createdAt) || Date.now(),
+    received: Number(data.received) || 0,
+    failures: 0,
+    reconnectTimer: null,
+    heartbeatTimer: null,
+    messageChain: Promise.resolve(),
+    captionChain: Promise.resolve(),
+    captionRevisions: new Map(Array.isArray(data.captionRevisions) ? data.captionRevisions : []),
+    pendingCaptions: new Map(),
+    pendingDraft: null,
+    draftTimer: null,
+    lastDraftOrig: '',
+    lastDraftTrans: '',
+    seen: new Set(Array.isArray(data.seen) ? data.seen : []),
+    socket: null,
+    ready: false,
+    closed: false,
+  };
+}
+
+function saveAudienceHostSession(session) {
+  if (session.transport !== 'relay' || session.closed) return;
+  sessionStorage.setItem(AUDIENCE_HOST_SESSION_KEY, JSON.stringify({
+    id: session.id,
+    expiresAt: session.expiresAt,
+    hostTokenHash: session.hostTokenHash,
+    joinSecret: session.joinSecret,
+    relayUrl: session.relayUrl,
+    createdAt: session.createdAt,
+    received: session.received,
+    captionRevisions: [...session.captionRevisions].slice(-200),
+    seen: [...session.seen].slice(-200),
+  }));
+}
+
+function clearAudienceHostSession() {
+  sessionStorage.removeItem(AUDIENCE_HOST_SESSION_KEY);
+}
+
+async function restoreAudienceHostSession() {
+  if (app.config.audienceInput?.transport !== 'relay') return;
+  let saved;
+  try { saved = JSON.parse(sessionStorage.getItem(AUDIENCE_HOST_SESSION_KEY) || 'null'); } catch {}
+  if (
+    !saved
+    || !/^[A-Za-z0-9_-]{8,32}$/.test(saved.id || '')
+    || !/^[0-9a-f]{64}$/.test(saved.hostTokenHash || '')
+    || !/^[A-Za-z0-9_-]{20,80}$/.test(saved.joinSecret || '')
+    || !saved.relayUrl
+    || Number(saved.expiresAt) <= Date.now()
+  ) {
+    clearAudienceHostSession();
+    return;
+  }
+  const session = makeRelayAudienceSession(saved);
+  app.audience = session;
+  try {
+    await connectRelayHost(session, true);
+    showAudienceSession(session);
+  } catch {
+    showAudienceSession(session);
+    scheduleRelayReconnect(session);
+  }
+}
+
 function audienceJoinUrl(session) {
   const configured = session.transport === 'relay' ? '' : app.config.audienceInput?.publicUrl;
   const page = configured
@@ -518,6 +589,7 @@ function publishAudienceCaption(payload, { persist = false } = {}) {
   const revision = (session.captionRevisions.get(payload.captionId) || 0) + 1;
   session.captionRevisions.set(payload.captionId, revision);
   const versioned = { ...payload, revision, updatedAt: Date.now() };
+  saveAudienceHostSession(session);
   if (persist) session.pendingCaptions.set(payload.captionId, versioned);
   sendAudienceCaptionPayload(session, versioned, persist);
 }
@@ -591,6 +663,7 @@ function receiveAudienceMessage(message, session) {
     : message.language || null;
   void queueTranslation(segment, message.text, detectedLanguage);
   session.received += 1;
+  saveAudienceHostSession(session);
   el.audienceHint.textContent = `已收到 ${session.received} 条文字发言；二维码仍可继续使用。`;
   el.audienceHint.classList.remove('warn');
 }
@@ -603,12 +676,30 @@ function relayWebSocketUrl(session) {
 
 function scheduleRelayReconnect(session) {
   if (app.audience !== session || session.closed) return;
+  if (Number(session.expiresAt) <= Date.now()) {
+    session.closed = true;
+    app.audience = null;
+    clearAudienceHostSession();
+    el.audienceBtn.classList.remove('active');
+    return;
+  }
   session.failures += 1;
   const delay = Math.min(10_000, 500 * 2 ** session.failures);
   if (session.failures === 1) setError('字幕直播间暂时断开，正在自动重连。');
   session.reconnectTimer = setTimeout(() => {
     void connectRelayHost(session, true).catch(() => scheduleRelayReconnect(session));
   }, delay);
+}
+
+function startRelayHeartbeat(session) {
+  clearInterval(session.heartbeatTimer);
+  const send = () => {
+    if (session.socket?.readyState === WebSocket.OPEN && session.ready) {
+      session.socket.send(JSON.stringify({ type: 'heartbeat' }));
+    }
+  };
+  send();
+  session.heartbeatTimer = setInterval(send, 10_000);
 }
 
 function connectRelayHost(session, initial = false) {
@@ -631,6 +722,8 @@ function connectRelayHost(session, initial = false) {
         clearTimeout(timeout);
         session.failures = 0;
         session.ready = true;
+        startRelayHeartbeat(session);
+        saveAudienceHostSession(session);
         flushAudienceCaptions(session);
         if (el.errorText.textContent.startsWith('字幕直播间暂时断开')) setError('');
         if (!settled) {
@@ -659,6 +752,7 @@ function connectRelayHost(session, initial = false) {
               return;
             }
             session.seen.add(message.messageId);
+            saveAudienceHostSession(session);
             receiveAudienceMessage({ text, name, language, seq: message.seq, at: message.at }, session);
             socket.send(JSON.stringify({ type: 'ack', messageId: message.messageId }));
           } catch {
@@ -667,6 +761,8 @@ function connectRelayHost(session, initial = false) {
         });
       } else if (message.type === 'closed') {
         session.closed = true;
+        clearInterval(session.heartbeatTimer);
+        clearAudienceHostSession();
         el.audienceBtn.classList.remove('active');
         el.audienceEnd.hidden = true;
         el.audienceHint.textContent = '字幕直播间已结束，请重新创建二维码。';
@@ -675,6 +771,7 @@ function connectRelayHost(session, initial = false) {
     });
     socket.addEventListener('close', () => {
       clearTimeout(timeout);
+      clearInterval(session.heartbeatTimer);
       session.ready = false;
       if (!settled && initial) {
         settled = true;
@@ -748,31 +845,16 @@ async function createAudienceSession() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || `创建失败（${response.status}）`);
-      const session = {
+      const session = makeRelayAudienceSession({
         ...body,
         hostTokenHash,
         joinSecret,
         relayUrl,
-        transport: 'relay',
         createdAt: Date.now(),
-        received: 0,
-        failures: 0,
-        reconnectTimer: null,
-        messageChain: Promise.resolve(),
-        captionChain: Promise.resolve(),
-        captionRevisions: new Map(),
-        pendingCaptions: new Map(),
-        pendingDraft: null,
-        draftTimer: null,
-        lastDraftOrig: '',
-        lastDraftTrans: '',
-        seen: new Set(),
-        socket: null,
-        ready: false,
-        closed: false,
-      };
+      });
       app.audience = session;
       await connectRelayHost(session, true);
+      saveAudienceHostSession(session);
       showAudienceSession(session);
       return;
     }
@@ -813,6 +895,8 @@ async function endAudienceSession() {
   clearTimeout(session.pollTimer);
   clearTimeout(session.reconnectTimer);
   clearTimeout(session.draftTimer);
+  clearInterval(session.heartbeatTimer);
+  clearAudienceHostSession();
   app.audience = null;
   el.audienceBtn.classList.remove('active');
   el.audienceSession.hidden = true;
@@ -823,6 +907,16 @@ async function endAudienceSession() {
     if (session.socket?.readyState === WebSocket.OPEN) {
       session.socket.send(JSON.stringify({ type: 'close-room' }));
       session.socket.close();
+    } else {
+      try {
+        await fetch(`${session.relayUrl.replace(/\/$/, '')}/v1/rooms/${encodeURIComponent(session.id)}/close`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ hostHash: session.hostTokenHash }),
+        });
+      } catch {
+        // The room still expires server-side; ending locally must remain instant.
+      }
     }
     return;
   }
@@ -2764,6 +2858,7 @@ await loadGlossaryPacks();
 
 fillLanguageSelects();
 await loadConfig();
+await restoreAudienceHostSession();
 await refreshDevices();
 const savedSource = localStorage.getItem('lc.source');
 const sourcePreference = resolveAudioSourcePreference(
