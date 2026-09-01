@@ -412,7 +412,7 @@ body.show-timestamps .segment .timestamp + .identity:not(:empty)::before { conte
 /* ---------------------------------------------------------------- meter */
 
 .meter {
-  width: 76px;
+  width: 100%;
   height: 5px;
   border-radius: 3px;
   background: var(--border);
@@ -427,6 +427,9 @@ body.show-timestamps .segment .timestamp + .identity:not(:empty)::before { conte
   background: var(--accent);
   transition: width 0.08s linear;
 }
+
+.font-link { align-self: center; padding-inline: 8px; }
+.font-link[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--accent-dim) inset; }
 
 .error { color: var(--danger); font-size: 12px; }
 
@@ -613,24 +616,11 @@ body[data-view="ticker"] .segment {
 .chip:empty { display: none; }
 .chip.warn { color: #fbbf24; border-color: #fbbf24; }
 
-/* ---------------------------------------------------------------- noise gate */
-
-.meter { position: relative; }
-
-/* Threshold marker on the level meter — set it just above the background. */
-.meter b {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--text);
-  opacity: 0.65;
-}
-.meter b[hidden] { display: none; }
+/* ---------------------------------------------------------------- input level + sound threshold */
 
 .meter i.gated { opacity: 0.28; }
 
-.gate {
+.signal-control {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -638,8 +628,64 @@ body[data-view="ticker"] .segment {
   color: var(--dim);
   white-space: nowrap;
 }
-.gate input[type="range"] { width: 64px; }
-.gate .mono { min-width: 1.6em; text-align: right; }
+.signal-track {
+  position: relative;
+  display: block;
+  width: 132px;
+  height: 20px;
+  flex: none;
+}
+.signal-track .meter {
+  position: absolute;
+  inset: 50% 0 auto;
+  transform: translateY(-50%);
+}
+.signal-track input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.signal-track input[type="range"]::-webkit-slider-runnable-track { height: 5px; background: transparent; }
+.signal-track input[type="range"]::-webkit-slider-thumb {
+  width: 12px;
+  height: 18px;
+  margin-top: -7px;
+  border: 2px solid var(--bg-bar);
+  border-radius: 5px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.signal-track input[type="range"]::-moz-range-track { height: 5px; background: transparent; }
+.signal-track input[type="range"]::-moz-range-thumb {
+  width: 9px;
+  height: 16px;
+  border: 2px solid var(--bg-bar);
+  border-radius: 5px;
+  background: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.signal-control .mono { min-width: 1.6em; text-align: right; }
+.audio-level-status {
+  max-width: 230px;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audio-level-status[data-state="active"] { color: var(--accent); }
+.audio-level-status[data-state="gated"] { color: #fbbf24; }
+.audio-level-status[data-state="silent"] { color: var(--danger); font-weight: 650; }
+#device.no-signal { outline: 2px solid var(--danger); outline-offset: 1px; }
 
 .terms input[type="password"] {
   margin-top: 5px;
@@ -791,7 +837,9 @@ body.phone #controls {
   z-index: 60;
   max-height: 78dvh;
   overflow-y: auto;
+  overflow-x: hidden;
   flex-direction: column;
+  flex-wrap: nowrap;
   align-items: stretch;
   gap: 14px;
   padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
@@ -832,8 +880,10 @@ body.phone .tools {
 }
 body.phone .tools .ghost { flex: 1 1 auto; justify-content: center; padding: 11px 10px; }
 body.phone .tools .lbl { display: inline; }
-body.phone .field.compact { flex: 1 1 130px; }
+body.phone .field.compact { flex: 1 1 96px; }
 body.phone .field.compact input[type="range"] { flex: 1; width: auto; }
+body.phone .tools .font-link { flex: 0 0 46px; padding-inline: 10px; }
+body.phone .tools .font-link .lbl { display: none; }
 
 body.phone #swapBtn { align-self: stretch; padding: 11px; }
 body.phone #audienceBtn { width: 100%; justify-content: center; padding: 11px; }
@@ -886,9 +936,10 @@ body.phone[data-view="ticker"] .segment { padding-inline-start: 0; border-inline
 
 /* The status bar keeps only what is glanceable while speaking. */
 body.phone #statusBar { padding: 7px 14px; font-size: 12px; gap: 9px; }
-body.phone #statusBar .gate,
 body.phone #statusBar #counter { display: none; }
-body.phone .meter { width: 48px; }
+body.phone #statusBar .signal-name { display: none; }
+body.phone #statusBar .signal-track { width: 86px; }
+body.phone #statusBar .audio-level-status { max-width: 112px; }
 
 body.phone .jump { bottom: calc(76px + env(safe-area-inset-bottom)); }
 body.phone #theaterExit { top: 10px; right: 10px; }

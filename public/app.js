@@ -9,7 +9,14 @@
 //               are translated through /api/translate.
 
 import { qrDataUrl } from './qr.js';
-import { resolveAudioSourcePreference } from './audio-source.js';
+import {
+  AUDIO_SIGNAL_MIN_RMS,
+  classifyAudioSignal,
+  defaultAudioSourceLabel,
+  isDefaultAudioSource,
+  resolveAudioSourcePreference,
+} from './audio-source.js';
+import { linkedFontSizes } from './font-size.js';
 import {
   decryptAudiencePayload,
   detectTypedLanguage,
@@ -145,6 +152,7 @@ const el = {
   swapBtn: $('swapBtn'),
   fontSize: $('fontSize'),
   origFontSize: $('origFontSize'),
+  fontLinkBtn: $('fontLinkBtn'),
   notice: $('notice'),
   noticeText: $('noticeText'),
   noticeAction: $('noticeAction'),
@@ -175,9 +183,9 @@ const el = {
   statusDot: $('statusDot'),
   statusText: $('statusText'),
   meterFill: $('meterFill'),
-  meterGate: $('meterGate'),
   gate: $('gate'),
   gateValue: $('gateValue'),
+  audioLevelStatus: $('audioLevelStatus'),
   clock: $('clock'),
   translatorStatus: $('translatorStatus'),
   counter: $('counter'),
@@ -244,7 +252,17 @@ const stream = {
 };
 
 // Audio graph + socket handles.
-const io = { ws: null, ctx: null, node: null, mediaStream: null, recognition: null };
+const io = {
+  ws: null,
+  ctx: null,
+  node: null,
+  mediaStream: null,
+  recognition: null,
+  audioStartedAt: 0,
+  hasDetectedSignal: false,
+  silenceTimer: null,
+  audioDeviceLabel: '',
+};
 
 
 // ---------------------------------------------------------------- BYOK mode
@@ -940,16 +958,30 @@ async function refreshDevices() {
   }
   const inputs = devices.filter((d) => d.kind === 'audioinput');
   const previous = el.device.value;
+  const wasDefault = isDefaultAudioSource(previous)
+    || el.device.selectedOptions[0]?.dataset.defaultSource === 'true';
+  // enumerateDevices() orders the system default capture device first. Chrome
+  // also commonly labels it "Default - …" or gives it the literal id
+  // "default". Select that concrete pseudo-device instead of relying on an
+  // unconstrained getUserMedia call, which is unreliable on older macOS.
+  const defaultInput = inputs.find((device) => device.deviceId === 'default')
+    || inputs.find((device) => /^default\b/i.test(device.label))
+    || inputs[0];
+  const defaultValue = defaultInput?.deviceId || '';
 
   el.device.innerHTML = '';
-  el.device.append(new Option('默认麦克风', ''));
+  const defaultOption = new Option(defaultAudioSourceLabel(defaultInput?.label), defaultValue);
+  defaultOption.dataset.defaultSource = 'true';
+  el.device.append(defaultOption);
   el.device.append(new Option('🔊 标签页 / 系统声音（浏览器捕获）', 'display'));
-  inputs.forEach((d, i) => {
+  inputs.filter((device) => device !== defaultInput).forEach((d, i) => {
     el.device.append(new Option(d.label || `输入设备 ${i + 1}`, d.deviceId));
   });
-  // 'display' and '' are stable pseudo-devices; real device ids are not, so only
-  // restore those if the device is still present.
-  if (previous === 'display' || previous === '') el.device.value = previous;
+  // Browser capture is a stable pseudo-device. The system-default option is
+  // rebuilt from the current enumeration; physical ids are restored only while
+  // the corresponding device remains available.
+  if (previous === 'display') el.device.value = previous;
+  else if (wasDefault) el.device.value = defaultValue;
   else if (previous && inputs.some((d) => d.deviceId === previous)) el.device.value = previous;
 }
 
@@ -1777,6 +1809,53 @@ async function startDisplayAudio() {
   return stream;
 }
 
+function setAudioSignalState(state, message = '') {
+  const copy = {
+    idle: '未开始',
+    waiting: '请说话测试',
+    active: '有声音',
+    gated: '声音低于阈值',
+    silent: '未检测到声音 · 请更换输入',
+  };
+  el.audioLevelStatus.dataset.state = state;
+  el.audioLevelStatus.textContent = message || copy[state] || copy.waiting;
+  const device = io.audioDeviceLabel || el.device.selectedOptions[0]?.textContent || '当前输入';
+  el.audioLevelStatus.title = `当前输入：${device}`;
+  el.device.classList.toggle('no-signal', state === 'silent');
+  el.device.title = state === 'silent'
+    ? `当前输入：${device}。没有检测到声音，请说话测试、检查 macOS 输入音量，或改选一个具体麦克风。`
+    : `当前输入：${device}`;
+}
+
+function beginAudioSignalCheck(track) {
+  clearTimeout(io.silenceTimer);
+  io.audioStartedAt = performance.now();
+  io.hasDetectedSignal = false;
+  io.audioDeviceLabel = track?.label || el.device.selectedOptions[0]?.textContent || '';
+  setAudioSignalState('waiting');
+  io.silenceTimer = setTimeout(() => {
+    if (!io.hasDetectedSignal) setAudioSignalState('silent');
+  }, 4_100);
+  track?.addEventListener('mute', () => setAudioSignalState('silent', '输入已静音 · 请检查麦克风'));
+  track?.addEventListener('unmute', () => setAudioSignalState('waiting'));
+}
+
+function showAudioLevel(data) {
+  el.meterFill.style.width = `${Math.min(100, Math.round(data.peak * 140))}%`;
+  el.meterFill.classList.toggle('gated', Boolean(data.gated));
+  if (data.rms >= AUDIO_SIGNAL_MIN_RMS) {
+    io.hasDetectedSignal = true;
+    clearTimeout(io.silenceTimer);
+  }
+  const state = classifyAudioSignal({
+    rms: data.rms,
+    gated: Boolean(data.gated),
+    elapsedMs: performance.now() - io.audioStartedAt,
+    hasDetectedSignal: io.hasDetectedSignal,
+  });
+  setAudioSignalState(state);
+}
+
 async function startAudio() {
   const deviceId = el.device.value;
   // Raw audio: browser AGC / noise suppression / echo cancellation are tuned for
@@ -1798,6 +1877,8 @@ async function startAudio() {
     io.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
     await refreshDevices(); // device labels only populate after permission is granted
   }
+  const audioTrack = io.mediaStream.getAudioTracks()[0];
+  beginAudioSignalCheck(audioTrack);
 
   // Ask for 16 kHz, but read back what we actually got — Safari ignores the hint.
   io.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -1816,10 +1897,9 @@ async function startAudio() {
   io.node.port.onmessage = (event) => {
     const data = event.data;
     if (data.type === 'level') {
-      el.meterFill.style.width = `${Math.min(100, Math.round(data.peak * 140))}%`;
-      // Dim the meter while the gate is shut, so it is obvious when audio is
-      // being held back rather than the mic having gone dead.
-      el.meterFill.classList.toggle('gated', Boolean(data.gated));
+      // The worklet reports the pre-gate signal, so a quiet microphone and
+      // audio intentionally held below the threshold remain distinguishable.
+      showAudioLevel(data);
       return;
     }
     if (data.type === 'audio' && io.ws?.readyState === WebSocket.OPEN) {
@@ -1834,6 +1914,7 @@ async function startAudio() {
 }
 
 function stopAudio() {
+  clearTimeout(io.silenceTimer);
   try { io.node?.port.postMessage('stop'); } catch {}
   try { io.node?.disconnect(); } catch {}
   try { io.mediaStream?.getTracks().forEach((t) => t.stop()); } catch {}
@@ -1841,7 +1922,12 @@ function stopAudio() {
   io.node = null;
   io.mediaStream = null;
   io.ctx = null;
+  io.audioStartedAt = 0;
+  io.hasDetectedSignal = false;
+  io.audioDeviceLabel = '';
   el.meterFill.style.width = '0%';
+  el.meterFill.classList.remove('gated');
+  setAudioSignalState('idle');
 }
 
 // The slider is 0–60 for feel; the underlying RMS threshold is small because
@@ -1853,9 +1939,7 @@ function applyGate() {
   el.gateValue.textContent = value === 0 ? '关' : String(value);
   localStorage.setItem('lc.gate', String(value));
 
-  // Mark the threshold on the meter, using the same scale the level bar uses.
-  el.meterGate.hidden = value === 0;
-  el.meterGate.style.left = `${Math.min(100, gateThreshold() * 140 * 100)}%`;
+  el.gate.setAttribute('aria-valuetext', value === 0 ? '关闭' : String(value));
 
   io.node?.port.postMessage({ type: 'threshold', value: gateThreshold() });
 }
@@ -2526,8 +2610,12 @@ el.length.addEventListener('change', () => {
 // Browser/system capture is intentionally session-only. Persisting it made a
 // returning user silently start from tab capture instead of the safe mic default.
 el.device.addEventListener('change', () => {
-  if (el.device.value === 'display' || el.device.value === '') localStorage.removeItem('lc.source');
+  const selectedDefault = el.device.selectedOptions[0]?.dataset.defaultSource === 'true';
+  if (el.device.value === 'display' || selectedDefault || isDefaultAudioSource(el.device.value)) {
+    localStorage.removeItem('lc.source');
+  }
   else localStorage.setItem('lc.source', el.device.value);
+  if (!app.running) setAudioSignalState('idle');
 });
 
 el.gate.addEventListener('input', applyGate);
@@ -2690,11 +2778,53 @@ function applyFontSize(input, cssVar, storageKey) {
   localStorage.setItem(storageKey, input.value);
 }
 
-el.origFontSize.addEventListener('input', () =>
-  applyFontSize(el.origFontSize, '--original-size', 'lc.origSize2'));
+let fontSizesLinked = false;
+let fontSizeRatio = Number(localStorage.getItem('lc.fontRatio')) || 42 / 34;
 
-el.fontSize.addEventListener('input', () =>
-  applyFontSize(el.fontSize, '--translation-size', 'lc.transSize2'));
+function setFontSizesLinked(enabled, captureRatio = enabled) {
+  fontSizesLinked = enabled;
+  if (enabled && captureRatio) {
+    fontSizeRatio = Number(el.origFontSize.value) / Number(el.fontSize.value);
+    localStorage.setItem('lc.fontRatio', String(fontSizeRatio));
+  }
+  el.fontLinkBtn.setAttribute('aria-pressed', String(enabled));
+  el.fontLinkBtn.setAttribute(
+    'aria-label',
+    enabled ? '解除原文和译文字号比例锁定' : '锁定原文和译文字号比例',
+  );
+  el.fontLinkBtn.title = enabled
+    ? '字号比例已锁定；调整任一字号会同步缩放，达到任一边界时一起停止'
+    : '锁定字号比例：调整任一字号时按当前比例同步缩放';
+  localStorage.setItem('lc.fontLinked', enabled ? '1' : '0');
+}
+
+function applyLinkedFontSize(changed) {
+  const source = changed === 'original' ? el.origFontSize : el.fontSize;
+  const sizes = linkedFontSizes({
+    changed,
+    value: Number(source.value),
+    ratio: fontSizeRatio,
+    min: Number(source.min),
+    max: Number(source.max),
+    step: Number(source.step),
+  });
+  el.origFontSize.value = String(sizes.original);
+  el.fontSize.value = String(sizes.translation);
+  applyFontSize(el.origFontSize, '--original-size', 'lc.origSize2');
+  applyFontSize(el.fontSize, '--translation-size', 'lc.transSize2');
+}
+
+el.origFontSize.addEventListener('input', () => {
+  if (fontSizesLinked) applyLinkedFontSize('original');
+  else applyFontSize(el.origFontSize, '--original-size', 'lc.origSize2');
+});
+
+el.fontSize.addEventListener('input', () => {
+  if (fontSizesLinked) applyLinkedFontSize('translation');
+  else applyFontSize(el.fontSize, '--translation-size', 'lc.transSize2');
+});
+
+el.fontLinkBtn.addEventListener('click', () => setFontSizesLinked(!fontSizesLinked));
 
 // 跟随系统 → 亮色 → 暗色 → 跟随系统
 const THEMES = [
@@ -2842,13 +2972,15 @@ for (const [input, cssVar, key] of [
   if (saved) input.value = saved;
   document.documentElement.style.setProperty(cssVar, `${input.value}px`);
 }
+const savedFontLink = localStorage.getItem('lc.fontLinked') === '1';
+setFontSizesLinked(savedFontLink, savedFontLink && !localStorage.getItem('lc.fontRatio'));
 
 applyTheme(localStorage.getItem('lc.theme') || 'system');
 setTimestamps(localStorage.getItem('lc.timestamps') === '1');
 
 applyLayout();
 setLocked(localStorage.getItem('lc.locked') !== '0');
-el.length.value = localStorage.getItem('lc.length') || 'medium';
+el.length.value = localStorage.getItem('lc.length') || 'short';
 el.gate.value = localStorage.getItem('lc.gate') || '0';
 applyGate();
 el.view.value = localStorage.getItem('lc.view') || 'list';
@@ -2867,6 +2999,7 @@ const sourcePreference = resolveAudioSourcePreference(
 );
 el.device.value = sourcePreference.value;
 if (sourcePreference.remove) localStorage.removeItem('lc.source');
+setAudioSignalState('idle');
 setStatus('idle', '未连接');
 offerRestore();
 
@@ -2874,6 +3007,8 @@ offerRestore();
 //   __lc.feed({ tokens: [{ text: 'Hello', is_final: true, translation_status: 'original' }] })
 window.__lc = {
   feed: (message) => handleSonioxMessage(JSON.stringify(message)),
+  // Replay the worklet's pre-gate level report when diagnosing meter/status UI.
+  level: (data) => showAudioLevel(data),
   // Copy the raw stream + committed segments to the clipboard for diagnosis.
   dump: () => {
     const text = JSON.stringify(

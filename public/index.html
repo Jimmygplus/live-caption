@@ -58,7 +58,7 @@
   <div class="field grow">
     <label for="device">音频输入</label>
     <select id="device">
-      <option value="">默认麦克风</option>
+      <option value="">系统默认麦克风</option>
       <option value="display">🔊 标签页 / 系统声音（浏览器捕获）</option>
     </select>
   </div>
@@ -66,8 +66,8 @@
   <div class="field">
     <label for="length">字幕长度</label>
     <select id="length">
-      <option value="short">短</option>
-      <option value="medium" selected>中</option>
+      <option value="short" selected>短</option>
+      <option value="medium">中</option>
       <option value="long">长</option>
     </select>
   </div>
@@ -93,6 +93,13 @@
       <label for="origFontSize" title="原文字号">原文</label>
       <input id="origFontSize" type="range" min="16" max="96" step="2" value="42" />
     </div>
+
+    <button id="fontLinkBtn" class="ghost font-link" type="button" aria-pressed="false"
+      aria-label="锁定原文和译文字号比例" title="锁定字号比例：调整任一字号时按当前比例同步缩放">
+      <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M9.5 14.5l5-5M7.2 16.8l-1 1a3.4 3.4 0 0 1-4.8-4.8l3.1-3.1a3.4 3.4 0 0 1 4.8 0M16.8 7.2l1-1a3.4 3.4 0 0 1 4.8 4.8l-3.1 3.1a3.4 3.4 0 0 1-4.8 0"></path>
+      </svg><span class="lbl">联动</span>
+    </button>
 
     <div class="field compact">
       <label for="fontSize" title="译文字号">译文</label>
@@ -169,15 +176,16 @@
 
 <footer class="bar" id="statusBar">
   <span id="statusText">未连接</span>
-  <div class="meter" title="输入电平（浅色竖线为收音门限）">
-    <i id="meterFill"></i>
-    <b id="meterGate" hidden></b>
-  </div>
-  <label class="gate" title="低于门限的声音不会被送去识别，用来挡掉背景里小声说话的人">
-    门限
-    <input id="gate" type="range" min="0" max="60" step="1" value="0" />
+  <label class="signal-control" title="音量条显示麦克风实际收到的声音；滑块决定低于哪个声音阈值时不送去识别">
+    <span class="signal-name">声音阈值</span>
+    <span class="signal-track">
+      <span class="meter" aria-hidden="true"><i id="meterFill"></i></span>
+      <input id="gate" type="range" min="0" max="60" step="1" value="0"
+        aria-label="声音阈值" aria-describedby="audioLevelStatus" />
+    </span>
     <span id="gateValue" class="mono">关</span>
   </label>
+  <span id="audioLevelStatus" class="audio-level-status" role="status" aria-live="polite">未开始</span>
   <span id="clock" class="mono">00:00</span>
   <span class="spacer"></span>
   <span id="translatorStatus" class="chip"></span>

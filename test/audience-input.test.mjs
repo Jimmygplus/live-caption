@@ -5,7 +5,12 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { qrSvg } from '../public/qr.js';
-import { resolveAudioSourcePreference } from '../public/audio-source.js';
+import {
+  classifyAudioSignal,
+  defaultAudioSourceLabel,
+  resolveAudioSourcePreference,
+} from '../public/audio-source.js';
+import { linkedFontSizes } from '../public/font-size.js';
 import {
   decryptAudiencePayload,
   detectTypedLanguage,
@@ -167,11 +172,34 @@ test('local QR encoder returns a complete SVG and rejects oversized links', () =
 });
 
 test('audio source preference always migrates browser capture back to the microphone', () => {
-  assert.deepEqual(resolveAudioSourcePreference(null, ['mic-1']), { value: '', remove: false });
-  assert.deepEqual(resolveAudioSourcePreference('display', ['mic-1']), { value: '', remove: true });
-  assert.deepEqual(resolveAudioSourcePreference('', ['mic-1']), { value: '', remove: true });
-  assert.deepEqual(resolveAudioSourcePreference('mic-1', ['mic-1']), { value: 'mic-1', remove: false });
-  assert.deepEqual(resolveAudioSourcePreference('missing-mic', ['mic-1']), { value: '', remove: true });
+  assert.deepEqual(resolveAudioSourcePreference(null, ['default', 'mic-1']), { value: 'default', remove: false });
+  assert.deepEqual(resolveAudioSourcePreference('display', ['default', 'mic-1']), { value: 'default', remove: true });
+  assert.deepEqual(resolveAudioSourcePreference('', ['pseudo-default', 'mic-1']), { value: 'pseudo-default', remove: true });
+  assert.deepEqual(resolveAudioSourcePreference('mic-1', ['default', 'mic-1']), { value: 'mic-1', remove: false });
+  assert.deepEqual(resolveAudioSourcePreference('missing-mic', ['default', 'mic-1']), { value: 'default', remove: true });
+  assert.equal(defaultAudioSourceLabel('Default - External Microphone (Built-in)'), '系统默认 · External Microphone (Built-in)');
+  assert.equal(defaultAudioSourceLabel(''), '系统默认麦克风');
+});
+
+test('audio signal state distinguishes silence from a threshold holding audio back', () => {
+  assert.equal(classifyAudioSignal({ rms: 0, elapsedMs: 1_000 }), 'waiting');
+  assert.equal(classifyAudioSignal({ rms: 0, elapsedMs: 4_100 }), 'silent');
+  assert.equal(classifyAudioSignal({ rms: 0.003, gated: false, elapsedMs: 4_100 }), 'active');
+  assert.equal(classifyAudioSignal({ rms: 0.003, gated: true, elapsedMs: 4_100 }), 'gated');
+  assert.equal(classifyAudioSignal({ rms: 0, elapsedMs: 20_000, hasDetectedSignal: true }), 'waiting');
+});
+
+test('linked caption sizes preserve their ratio and stop together at either boundary', () => {
+  const ratio = 42 / 34;
+  assert.deepEqual(linkedFontSizes({ changed: 'original', value: 84, ratio }), {
+    original: 84, translation: 68,
+  });
+  assert.deepEqual(linkedFontSizes({ changed: 'original', value: 16, ratio }), {
+    original: 20, translation: 16,
+  });
+  assert.deepEqual(linkedFontSizes({ changed: 'translation', value: 96, ratio }), {
+    original: 96, translation: 78,
+  });
 });
 
 test('audience relay payloads are encrypted, authenticated and language-aware', async () => {
@@ -444,4 +472,22 @@ test('participant page keeps speaking first and full captions available on deman
   assert.match(inputScript, /已排队，等待主持人恢复/);
   assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
   assert.doesNotMatch(hostScript, /localStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
+});
+
+test('host controls combine signal threshold, link font sizes and default to short captions', async () => {
+  const [html, css, script] = await Promise.all([
+    readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
+    readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(html, /<option value="short" selected>短<\/option>/);
+  assert.match(html, /id="fontLinkBtn"[^>]+aria-pressed="false"/);
+  assert.match(html, /class="signal-track"/);
+  assert.match(html, /声音阈值/);
+  assert.doesNotMatch(html, /id="meterGate"/);
+  assert.match(css, /\.signal-track input\[type="range"\]/);
+  assert.match(css, /body\.phone #controls \{[\s\S]*?flex-wrap: nowrap;/);
+  assert.match(script, /localStorage\.getItem\('lc\.length'\) \|\| 'short'/);
+  assert.match(script, /未检测到声音 · 请更换输入/);
+  assert.match(script, /level: \(data\) => showAudioLevel\(data\)/);
 });
