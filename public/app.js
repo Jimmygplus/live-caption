@@ -16,6 +16,12 @@ import {
   isDefaultAudioSource,
   resolveAudioSourcePreference,
 } from './audio-source.js';
+import {
+  AUDIO_CHECK_AMBIENT_MS,
+  AUDIO_CHECK_SPEECH_MS,
+  analyzeAudioCheck,
+  formatDbfs,
+} from './audio-check.js';
 import { linkedFontSizes } from './font-size.js';
 import {
   CAPTION_STATES,
@@ -126,6 +132,29 @@ const el = {
   sourceLabel: $('sourceLabel'),
   targetLabel: $('targetLabel'),
   device: $('device'),
+  audioCheckBtn: $('audioCheckBtn'),
+  audioCheckDialog: $('audioCheckDialog'),
+  audioCheckDevice: $('audioCheckDevice'),
+  audioCheckGate: $('audioCheckGate'),
+  audioCheckRun: $('audioCheckRun'),
+  audioCheckPhase: $('audioCheckPhase'),
+  audioCheckProgress: $('audioCheckProgress'),
+  audioCheckMeterFill: $('audioCheckMeterFill'),
+  audioCheckLive: $('audioCheckLive'),
+  audioCheckResult: $('audioCheckResult'),
+  audioCheckSummary: $('audioCheckSummary'),
+  audioCheckLevel: $('audioCheckLevel'),
+  audioCheckLevelValue: $('audioCheckLevelValue'),
+  audioCheckNoise: $('audioCheckNoise'),
+  audioCheckNoiseValue: $('audioCheckNoiseValue'),
+  audioCheckClipping: $('audioCheckClipping'),
+  audioCheckPeakValue: $('audioCheckPeakValue'),
+  audioCheckSilence: $('audioCheckSilence'),
+  audioCheckGuidance: $('audioCheckGuidance'),
+  audioCheckRecommendation: $('audioCheckRecommendation'),
+  audioCheckApply: $('audioCheckApply'),
+  audioCheckError: $('audioCheckError'),
+  audioCheckStart: $('audioCheckStart'),
   translator: $('translator'),
   view: $('view'),
   length: $('length'),
@@ -278,6 +307,20 @@ const io = {
   hasDetectedSignal: false,
   silenceTimer: null,
   audioDeviceLabel: '',
+};
+
+const audioCheck = {
+  running: false,
+  attempt: 0,
+  stream: null,
+  ctx: null,
+  node: null,
+  phase: 'idle',
+  phaseStartedAt: 0,
+  timeout: null,
+  progressTimer: null,
+  ambientFrames: [],
+  speechFrames: [],
 };
 
 
@@ -1458,7 +1501,7 @@ function checkLanguageMismatch() {
 }
 
 function setControlsDisabled(disabled) {
-  for (const control of [el.engine, el.sourceLang, el.targetLang, el.device]) {
+  for (const control of [el.engine, el.sourceLang, el.targetLang, el.device, el.audioCheckBtn]) {
     control.disabled = disabled;
   }
   el.mode.disabled = disabled || app.engine !== 'soniox';
@@ -2013,6 +2056,193 @@ function applyGate() {
   el.gate.setAttribute('aria-valuetext', value === 0 ? '关闭' : String(value));
 
   io.node?.port.postMessage({ type: 'threshold', value: gateThreshold() });
+}
+
+function updateAudioCheckSettings(deviceLabel = '') {
+  el.audioCheckDevice.textContent = deviceLabel
+    || el.device.selectedOptions[0]?.textContent
+    || '系统默认麦克风';
+  const gate = Number(el.gate.value);
+  el.audioCheckGate.textContent = gate === 0 ? '关闭（手动）' : `${gate}（手动）`;
+}
+
+function resetAudioCheckView() {
+  el.audioCheckRun.hidden = true;
+  el.audioCheckResult.hidden = true;
+  el.audioCheckResult.removeAttribute('data-outcome');
+  el.audioCheckError.textContent = '';
+  el.audioCheckProgress.value = 0;
+  el.audioCheckMeterFill.style.width = '0%';
+  el.audioCheckStart.textContent = '开始体检';
+  el.audioCheckApply.disabled = true;
+  delete el.audioCheckApply.dataset.gate;
+  updateAudioCheckSettings();
+}
+
+function stopAudioCheck({ resetView = false } = {}) {
+  audioCheck.running = false;
+  audioCheck.attempt += 1;
+  clearTimeout(audioCheck.timeout);
+  clearInterval(audioCheck.progressTimer);
+  try { audioCheck.node?.port.postMessage('stop'); } catch {}
+  try { audioCheck.node?.disconnect(); } catch {}
+  try { audioCheck.stream?.getTracks().forEach((track) => track.stop()); } catch {}
+  try { audioCheck.ctx?.close(); } catch {}
+  audioCheck.stream = null;
+  audioCheck.ctx = null;
+  audioCheck.node = null;
+  audioCheck.phase = 'idle';
+  audioCheck.timeout = null;
+  audioCheck.progressTimer = null;
+  // Do not retain a voice-level timeline after the aggregate result is built.
+  audioCheck.ambientFrames = [];
+  audioCheck.speechFrames = [];
+  if (resetView) resetAudioCheckView();
+}
+
+function renderAudioCheckResult(result) {
+  el.audioCheckRun.hidden = true;
+  el.audioCheckResult.hidden = false;
+  el.audioCheckResult.dataset.outcome = result.outcome;
+  el.audioCheckSummary.textContent = result.summary;
+  el.audioCheckLevel.textContent = result.reports.level;
+  el.audioCheckLevelValue.textContent = `语音 ${formatDbfs(result.metrics.speechRms)}`;
+  el.audioCheckNoise.textContent = result.reports.noise;
+  el.audioCheckNoiseValue.textContent = `底噪 ${formatDbfs(result.metrics.ambientRms)}`;
+  el.audioCheckClipping.textContent = result.reports.clipping;
+  el.audioCheckPeakValue.textContent = `峰值 ${Math.round(result.metrics.speechPeak * 100)}%`;
+  el.audioCheckSilence.textContent = result.reports.silence;
+  el.audioCheckGuidance.textContent = result.guidance;
+  el.audioCheckStart.textContent = '重新体检';
+
+  if (result.recommendedGate === null) {
+    el.audioCheckRecommendation.textContent = '暂无';
+    el.audioCheckApply.disabled = true;
+    delete el.audioCheckApply.dataset.gate;
+  } else {
+    el.audioCheckRecommendation.textContent = String(result.recommendedGate);
+    el.audioCheckApply.disabled = false;
+    el.audioCheckApply.textContent = '采用建议值';
+    el.audioCheckApply.dataset.gate = String(result.recommendedGate);
+  }
+}
+
+function finishAudioCheck() {
+  const result = analyzeAudioCheck({
+    ambientFrames: audioCheck.ambientFrames,
+    speechFrames: audioCheck.speechFrames,
+  });
+  stopAudioCheck();
+  renderAudioCheckResult(result);
+}
+
+function updateAudioCheckProgress() {
+  const elapsed = performance.now() - audioCheck.phaseStartedAt;
+  const value = audioCheck.phase === 'ambient'
+    ? Math.min(AUDIO_CHECK_AMBIENT_MS, elapsed)
+    : AUDIO_CHECK_AMBIENT_MS + Math.min(AUDIO_CHECK_SPEECH_MS, elapsed);
+  el.audioCheckProgress.value = value;
+}
+
+function beginAudioCheckSpeechPhase() {
+  audioCheck.phase = 'speech';
+  audioCheck.phaseStartedAt = performance.now();
+  el.audioCheckPhase.textContent = '现在请用平常音量说一句完整的话';
+  el.audioCheckLive.textContent = '例如：“大家好，我们现在开始今天的会议。”';
+  el.audioCheckProgress.value = AUDIO_CHECK_AMBIENT_MS;
+  audioCheck.timeout = setTimeout(finishAudioCheck, AUDIO_CHECK_SPEECH_MS);
+}
+
+function onAudioCheckLevel(data) {
+  if (!audioCheck.running) return;
+  const frame = { rms: Number(data.rms) || 0, peak: Number(data.peak) || 0 };
+  if (audioCheck.phase === 'ambient') audioCheck.ambientFrames.push(frame);
+  if (audioCheck.phase === 'speech') audioCheck.speechFrames.push(frame);
+  el.audioCheckMeterFill.style.width = `${Math.min(100, Math.round(frame.peak * 140))}%`;
+}
+
+async function startAudioCheck() {
+  stopAudioCheck();
+  const attempt = audioCheck.attempt;
+  el.audioCheckResult.hidden = true;
+  el.audioCheckError.textContent = '';
+  el.audioCheckRun.hidden = false;
+  el.audioCheckPhase.textContent = '正在连接输入设备…';
+  el.audioCheckLive.textContent = '浏览器可能会询问麦克风或屏幕共享权限。';
+  el.audioCheckStart.textContent = '停止体检';
+  audioCheck.running = true;
+
+  try {
+    const deviceId = el.device.value;
+    const constraints = {
+      audio: {
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    };
+    const capturedStream = deviceId === 'display'
+      ? await startDisplayAudio()
+      : await navigator.mediaDevices.getUserMedia(constraints);
+    if (!audioCheck.running || audioCheck.attempt !== attempt) {
+      capturedStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    audioCheck.stream = capturedStream;
+    const track = capturedStream.getAudioTracks()[0];
+    if (!track) throw new Error('所选输入没有音频轨道，请换一个设备。');
+    track.addEventListener('ended', () => {
+      if (audioCheck.running) {
+        stopAudioCheck({ resetView: true });
+        el.audioCheckError.textContent = '输入已停止，请重新选择设备后再试。';
+      }
+    });
+    updateAudioCheckSettings(track.label);
+
+    const checkContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    audioCheck.ctx = checkContext;
+    if (checkContext.state === 'suspended') await checkContext.resume();
+    await checkContext.audioWorklet.addModule('./pcm-worklet.js');
+    if (!audioCheck.running || audioCheck.attempt !== attempt) {
+      capturedStream.getTracks().forEach((captureTrack) => captureTrack.stop());
+      void checkContext.close();
+      return;
+    }
+    const source = checkContext.createMediaStreamSource(capturedStream);
+    audioCheck.node = new AudioWorkletNode(checkContext, 'pcm-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+      channelCount: 1,
+      channelCountMode: 'explicit',
+      processorOptions: { levelsOnly: true },
+    });
+    audioCheck.node.port.onmessage = (event) => {
+      if (event.data?.type === 'level') onAudioCheckLevel(event.data);
+    };
+    source.connect(audioCheck.node);
+
+    audioCheck.phase = 'ambient';
+    audioCheck.phaseStartedAt = performance.now();
+    el.audioCheckPhase.textContent = '先保持安静，正在测量环境底噪';
+    el.audioCheckLive.textContent = '请暂时不要说话。';
+    audioCheck.progressTimer = setInterval(updateAudioCheckProgress, 100);
+    audioCheck.timeout = setTimeout(beginAudioCheckSpeechPhase, AUDIO_CHECK_AMBIENT_MS);
+  } catch (error) {
+    if (audioCheck.attempt !== attempt) return;
+    stopAudioCheck();
+    el.audioCheckRun.hidden = true;
+    el.audioCheckStart.textContent = '重试';
+    el.audioCheckError.textContent = `无法开始体检：${error.message || error}`;
+  }
+}
+
+function openAudioCheckDialog() {
+  if (app.running) return;
+  stopAudioCheck();
+  resetAudioCheckView();
+  el.audioCheckDialog.showModal();
 }
 
 // ---------------------------------------------------------------- Soniox engine
@@ -2691,6 +2921,21 @@ el.device.addEventListener('change', () => {
 });
 
 el.gate.addEventListener('input', applyGate);
+el.audioCheckBtn.addEventListener('click', openAudioCheckDialog);
+el.audioCheckStart.addEventListener('click', () => {
+  if (audioCheck.running) stopAudioCheck({ resetView: true });
+  else void startAudioCheck();
+});
+el.audioCheckApply.addEventListener('click', () => {
+  const gate = Number(el.audioCheckApply.dataset.gate);
+  if (!Number.isFinite(gate)) return;
+  el.gate.value = String(gate);
+  applyGate();
+  updateAudioCheckSettings();
+  el.audioCheckApply.textContent = '已采用';
+});
+el.audioCheckDialog.addEventListener('close', () => stopAudioCheck());
+el.audioCheckDialog.addEventListener('cancel', () => stopAudioCheck());
 
 el.stage.addEventListener('scroll', updateJumpButton, { passive: true });
 el.jumpBtn.addEventListener('click', jumpToLatest);
@@ -3093,6 +3338,14 @@ window.__lc = {
   feed: (message) => handleSonioxMessage(JSON.stringify(message)),
   // Replay the worklet's pre-gate level report when diagnosing meter/status UI.
   level: (data) => showAudioLevel(data),
+  // Render a complete check from deterministic level fixtures without asking
+  // for microphone permission; used by browser regression tests and demos.
+  audioCheck: (samples) => {
+    openAudioCheckDialog();
+    const result = analyzeAudioCheck(samples);
+    renderAudioCheckResult(result);
+    return result;
+  },
   // Copy the raw stream + committed segments to the clipboard for diagnosis.
   dump: () => {
     const text = JSON.stringify(

@@ -484,10 +484,15 @@ test('host controls combine signal threshold, link font sizes and default to sho
   assert.match(html, /id="fontLinkBtn"[^>]+aria-pressed="false"/);
   assert.match(html, /class="signal-track"/);
   assert.match(html, /声音阈值/);
+  assert.match(html, /id="audioCheckBtn"/);
+  assert.match(html, /会前音频体检/);
+  assert.match(html, /降噪关 · 回声消除关 · 自动增益关/);
   assert.doesNotMatch(html, /id="meterGate"/);
   assert.match(css, /\.signal-track input\[type="range"\]/);
   assert.match(css, /body\.phone #controls \{[\s\S]*?flex-wrap: nowrap;/);
   assert.match(script, /localStorage\.getItem\('lc\.length'\) \|\| 'short'/);
   assert.match(script, /未检测到声音 · 请更换输入/);
   assert.match(script, /level: \(data\) => showAudioLevel\(data\)/);
+  assert.match(script, /audioCheck: \(samples\)/);
+  assert.match(script, /processorOptions: \{ levelsOnly: true \}/);
 });

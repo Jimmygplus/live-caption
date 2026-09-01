@@ -63,6 +63,8 @@
     </select>
   </div>
 
+  <button id="audioCheckBtn" class="ghost" type="button" title="开始前检查麦克风、环境噪声和收音门限">🎙<span class="lbl">音频体检</span></button>
+
   <div class="field">
     <label for="length">字幕长度</label>
     <select id="length">
@@ -281,6 +283,53 @@
       <button id="audienceEnd" type="button" class="ghost danger" hidden>结束字幕直播间</button>
       <span class="spacer"></span>
       <button value="close" class="primary" type="submit">完成</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="audioCheckDialog" class="terms audio-check-dialog" aria-labelledby="audioCheckTitle">
+  <form method="dialog">
+    <h2 id="audioCheckTitle">会前音频体检</h2>
+    <p class="hint">先听 2.5 秒环境声，再请你说一句话。只在本机统计音量，不录音、不上传，也不保存检测历史。</p>
+
+    <section class="audio-check-settings" aria-labelledby="audioCheckSettingsTitle">
+      <h3 id="audioCheckSettingsTitle">开始前设置</h3>
+      <dl>
+        <div><dt>输入设备</dt><dd id="audioCheckDevice">系统默认麦克风</dd></div>
+        <div><dt>音频处理</dt><dd>原始音频 · 降噪关 · 回声消除关 · 自动增益关</dd></div>
+        <div><dt>当前门限</dt><dd id="audioCheckGate">关闭（手动）</dd></div>
+      </dl>
+    </section>
+
+    <section id="audioCheckRun" class="audio-check-run" hidden aria-labelledby="audioCheckPhase">
+      <p id="audioCheckPhase" class="audio-check-phase" role="status" aria-live="polite">准备检测</p>
+      <progress id="audioCheckProgress" max="6500" value="0" aria-label="音频体检进度"></progress>
+      <div class="audio-check-meter" aria-hidden="true"><i id="audioCheckMeterFill"></i></div>
+      <p id="audioCheckLive" class="hint">请保持安静，让我们测量环境底噪。</p>
+    </section>
+
+    <section id="audioCheckResult" class="audio-check-result" hidden aria-labelledby="audioCheckSummary">
+      <h3 id="audioCheckSummary">检测完成</h3>
+      <div class="audio-check-reports">
+        <div><span>说话音量</span><strong id="audioCheckLevel">—</strong><small id="audioCheckLevelValue"></small></div>
+        <div><span>背景噪声</span><strong id="audioCheckNoise">—</strong><small id="audioCheckNoiseValue"></small></div>
+        <div><span>削波失真</span><strong id="audioCheckClipping">—</strong><small id="audioCheckPeakValue"></small></div>
+        <div><span>静音</span><strong id="audioCheckSilence">—</strong><small>检查输入是否可用</small></div>
+      </div>
+      <p id="audioCheckGuidance" class="audio-check-guidance"></p>
+      <div class="audio-check-recommendation">
+        <span>建议声音门限</span>
+        <strong id="audioCheckRecommendation">—</strong>
+        <button id="audioCheckApply" type="button" class="ghost">采用建议值</button>
+      </div>
+      <p class="hint">建议值不会自动覆盖你的设置；采用后仍可在底部音量条上手动调整或关闭。</p>
+    </section>
+
+    <p id="audioCheckError" class="error" role="alert"></p>
+    <div class="terms-actions">
+      <span class="spacer"></span>
+      <button value="close" class="ghost" type="submit">关闭</button>
+      <button id="audioCheckStart" class="primary" type="button">开始体检</button>
     </div>
   </form>
 </dialog>

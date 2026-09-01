@@ -20,7 +20,7 @@ const HOLD_MS = 400;
 const CLOSE_RATIO = 0.6;
 
 class PCMProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this._buffer = new Int16Array(CHUNK_SAMPLES);
     this._offset = 0;
@@ -29,6 +29,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this._sampleCount = 0;
     this._chunksSinceLevel = 0;
     this._running = true;
+    this._levelsOnly = Boolean(options?.processorOptions?.levelsOnly);
 
     this._threshold = 0; // 0 disables the gate entirely
     this._openUntil = 0; // frame index the hold expires at
@@ -81,9 +82,11 @@ class PCMProcessor extends AudioWorkletProcessor {
       this._buffer[this._offset++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
 
       if (this._offset === CHUNK_SAMPLES) {
-        // slice(0) copies, so the transferred buffer is never the live one.
-        const frame = this._buffer.buffer.slice(0);
-        this.port.postMessage({ type: 'audio', frame }, [frame]);
+        if (!this._levelsOnly) {
+          // slice(0) copies, so the transferred buffer is never the live one.
+          const frame = this._buffer.buffer.slice(0);
+          this.port.postMessage({ type: 'audio', frame }, [frame]);
+        }
         this._offset = 0;
 
         if (++this._chunksSinceLevel >= LEVEL_EVERY_CHUNKS) {
