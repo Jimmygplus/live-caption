@@ -18,6 +18,12 @@ import {
 } from './audio-source.js';
 import { linkedFontSizes } from './font-size.js';
 import {
+  CAPTION_STATES,
+  applyCaptionPatch,
+  createFinalCaption,
+  draftView,
+} from './caption-state.js';
+import {
   decryptAudiencePayload,
   detectTypedLanguage,
   encryptAudiencePayload,
@@ -146,6 +152,11 @@ const el = {
   audienceHint: $('audienceHint'),
   audiencePrivacy: $('audiencePrivacy'),
   audienceEnd: $('audienceEnd'),
+  captionEditDialog: $('captionEditDialog'),
+  captionEditForm: $('captionEditForm'),
+  captionEditOriginal: $('captionEditOriginal'),
+  captionEditTranslation: $('captionEditTranslation'),
+  captionEditHint: $('captionEditHint'),
   jumpBtn: $('jumpBtn'),
   jumpLabel: $('jumpLabel'),
   startBtn: $('startBtn'),
@@ -178,6 +189,10 @@ const el = {
   liveIdentity: $('liveIdentity'),
   liveTranslation: $('liveTranslation'),
   liveOriginal: $('liveOriginal'),
+  liveStableTranslation: $('liveStableTranslation'),
+  liveChangingTranslation: $('liveChangingTranslation'),
+  liveStableOriginal: $('liveStableOriginal'),
+  liveChangingOriginal: $('liveChangingOriginal'),
   placeholder: $('placeholder'),
   placeholderHint: $('placeholderHint'),
   statusDot: $('statusDot'),
@@ -202,7 +217,7 @@ const app = {
   },
   running: false,
   engine: 'soniox',
-  segments: [],          // { id, orig, trans, startMs, endMs, at, speaker, node }
+  segments: [],          // finalized caption records; DOM is a projection, never the source of truth
   nextId: 1,
   startedAt: 0,
   clockTimer: null,
@@ -224,6 +239,7 @@ const app = {
   touchStartY: 0,         // where a touch drag began, to tell scroll direction
   locked: true,           // pin the view to the newest caption
   audience: null,         // active QR text-input room and host polling state
+  editingSegmentId: null, // finalized caption currently open in the correction dialog
 };
 
 // Domain vocabulary, applied to BOTH recognition and translation.
@@ -1087,7 +1103,7 @@ function persistNow() {
     startedAt: app.startedAt,
     segments: app.segments.slice(-STORE_MAX_SEGMENTS).map((s) => ({
       o: s.orig, t: s.trans, s: s.startMs, e: s.endMs, k: s.speaker, a: +s.at,
-      x: s.source, n: s.author,
+      x: s.source, n: s.author, r: s.revision, q: s.state,
     })),
   };
   try {
@@ -1121,7 +1137,7 @@ function readSavedTranscript() {
 
 function restoreTranscript(data) {
   for (const s of data.segments) {
-    const segment = {
+    const segment = createFinalCaption({
       id: app.nextId++,
       orig: s.o || '',
       trans: s.t || '',
@@ -1132,7 +1148,11 @@ function restoreTranscript(data) {
       source: s.x || 'speech',
       author: s.n || '',
       node: null,
-    };
+    });
+    segment.revision = Number.isSafeInteger(s.r) && s.r > 0 ? s.r : 1;
+    segment.state = s.q === CAPTION_STATES.CORRECTED
+      ? CAPTION_STATES.CORRECTED
+      : CAPTION_STATES.FINAL;
     app.segments.push(segment);
     renderSegment(segment);
   }
@@ -1486,6 +1506,7 @@ function renderSegment(segment) {
   const li = document.createElement('li');
   li.className = 'segment';
   li.dataset.id = String(segment.id);
+  li.dataset.state = segment.state;
 
   // Colour-code speakers so a busy meeting reads as a conversation, not a wall.
   if (segment.speaker) li.dataset.speaker = speakerSlot(segment.speaker);
@@ -1514,8 +1535,15 @@ function renderSegment(segment) {
   trans.className = 'translation';
   trans.textContent = segment.trans;
 
+  const edit = document.createElement('button');
+  edit.className = 'segment-edit ghost';
+  edit.type = 'button';
+  edit.textContent = '修正';
+  edit.setAttribute('aria-label', `修正 ${stamp(segment.startMs)} 的字幕`);
+  edit.addEventListener('click', () => openCaptionEditor(segment));
+
   // Original first: the translation is appended below the caption, not swapped in.
-  li.append(meta, orig, trans);
+  li.append(meta, orig, trans, edit);
   if (!segment.trans) li.classList.add('no-translation');
 
   segment.node = li;
@@ -1523,14 +1551,51 @@ function renderSegment(segment) {
   scrollToBottom();
 }
 
-function patchSegmentTranslation(segment, translation) {
-  segment.trans = translation;
-  persistSoon(); // the translation is part of the record, not just the view
-  publishAudienceSegment(segment, 'corrected');
+function renderSegmentContent(segment) {
   if (!segment.node) return;
-  segment.node.querySelector('.translation').textContent = translation;
-  segment.node.classList.toggle('no-translation', !translation);
+  segment.node.dataset.state = segment.state;
+  segment.node.querySelector('.original').textContent = segment.orig;
+  segment.node.querySelector('.translation').textContent = segment.trans;
+  segment.node.classList.toggle('no-translation', !segment.trans);
+}
+
+function patchFinalCaption(segment, patch, { expectedRevision = segment.revision, state = segment.state } = {}) {
+  const result = applyCaptionPatch(segment, patch, { expectedRevision, state });
+  if (!result.applied) return false;
+  Object.assign(segment, result.caption);
+  persistSoon(); // the translation is part of the record, not just the view
+  publishAudienceSegment(segment, segment.state);
+  renderSegmentContent(segment);
   scrollToBottom();
+  return true;
+}
+
+function openCaptionEditor(segment) {
+  app.editingSegmentId = segment.id;
+  el.captionEditOriginal.value = segment.orig;
+  el.captionEditTranslation.value = segment.trans;
+  el.captionEditHint.textContent = `正在修正 ${stamp(segment.startMs)} 的第 ${segment.id} 段；保存后会同步到扫码屏幕和导出。`;
+  el.captionEditDialog.showModal();
+  el.captionEditOriginal.focus();
+}
+
+function saveCaptionCorrection() {
+  const segment = app.segments.find((item) => item.id === app.editingSegmentId);
+  if (!segment) return;
+  const orig = el.captionEditOriginal.value.trim();
+  const trans = el.captionEditTranslation.value.trim();
+  if (!orig) {
+    el.captionEditOriginal.setCustomValidity('原文不能为空。');
+    el.captionEditOriginal.reportValidity();
+    return;
+  }
+  el.captionEditOriginal.setCustomValidity('');
+  patchFinalCaption(segment, { orig, trans }, {
+    expectedRevision: segment.revision,
+    state: CAPTION_STATES.CORRECTED,
+  });
+  el.captionEditDialog.close('save');
+  segment.node?.querySelector('.segment-edit')?.focus();
 }
 
 const FOLLOW_THRESHOLD_PX = 260;
@@ -1591,11 +1656,13 @@ function updateJumpButton() {
 }
 
 function renderLive() {
-  const orig = (stream.finalOrig + stream.interimOrig).trim();
-  const trans = (stream.finalTrans + stream.interimTrans).trim();
+  const draft = draftView(stream);
+  const orig = (draft.original.stable + draft.original.changing).trim();
+  const trans = (draft.translation.stable + draft.translation.changing).trim();
 
   if (!orig && !trans) {
     el.live.hidden = true;
+    el.live.setAttribute('aria-busy', 'false');
     el.live.removeAttribute('data-speaker');
     return;
   }
@@ -1605,19 +1672,23 @@ function renderLive() {
   }
   const liveSpeaker = stream.speaker || stream.previewSpeaker;
   el.live.hidden = false;
+  el.live.dataset.state = draft.state;
+  el.live.setAttribute('aria-busy', 'true');
   if (liveSpeaker) el.live.dataset.speaker = speakerSlot(liveSpeaker);
   else el.live.removeAttribute('data-speaker');
   el.live.classList.toggle('no-translation', !trans);
   el.liveTimestamp.textContent = stamp(stream.displayStartMs + app.msOffset);
   el.liveIdentity.textContent = liveSpeaker ? speakerName(liveSpeaker) : '';
-  el.liveTranslation.textContent = trans;
-  el.liveOriginal.textContent = orig;
+  el.liveStableTranslation.textContent = draft.translation.stable;
+  el.liveChangingTranslation.textContent = draft.translation.changing;
+  el.liveStableOriginal.textContent = draft.original.stable;
+  el.liveChangingOriginal.textContent = draft.original.changing;
   publishAudienceDraft(orig, trans);
   scrollToBottom();
 }
 
 function pushSegment({ orig, trans, startMs, endMs, speaker, source = 'speech', author = '' }) {
-  const segment = {
+  const segment = createFinalCaption({
     id: app.nextId++,
     orig,
     trans,
@@ -1628,7 +1699,7 @@ function pushSegment({ orig, trans, startMs, endMs, speaker, source = 'speech', 
     source,
     author,
     node: null,
-  };
+  });
   app.segments.push(segment);
   renderSegment(segment);
   publishAudienceSegment(segment);
@@ -2248,6 +2319,7 @@ async function queueTranslation(segment, text, detectedLang) {
   // Nothing to do when the utterance is already in the target language.
   if (detectedLang && detectedLang === target) return;
 
+  const expectedRevision = segment.revision;
   try {
     if (isByok()) {
       const translation = await translateInBrowser({
@@ -2258,7 +2330,7 @@ async function queueTranslation(segment, text, detectedLang) {
         references: recentReferences(segment),
       });
       if (translation) {
-        patchSegmentTranslation(segment, translation);
+        patchFinalCaption(segment, { trans: translation }, { expectedRevision });
         app.translateFailures = 0;
         setTranslatorStatus('claude');
       }
@@ -2288,7 +2360,7 @@ async function queueTranslation(segment, text, detectedLang) {
     if (!res.ok) throw new Error(body.error || `翻译失败（${res.status}）`);
 
     if (body.translation) {
-      patchSegmentTranslation(segment, body.translation);
+      patchFinalCaption(segment, { trans: body.translation }, { expectedRevision });
       app.translateFailures = 0;
       setTranslatorStatus(body.provider);
       // Announce a silent vendor switch once, rather than letting the meeting
@@ -2945,6 +3017,18 @@ document.addEventListener('mousemove', (event) => {
 el.exportMenu.addEventListener('click', (event) => {
   const kind = event.target.closest('[data-export]')?.dataset.export;
   if (kind) void handleExport(kind);
+});
+
+el.captionEditForm.addEventListener('submit', (event) => {
+  const submitter = event.submitter?.value;
+  if (submitter !== 'save') return;
+  event.preventDefault();
+  saveCaptionCorrection();
+});
+
+el.captionEditDialog.addEventListener('close', () => {
+  app.editingSegmentId = null;
+  el.captionEditOriginal.setCustomValidity('');
 });
 
 document.addEventListener('click', (event) => {

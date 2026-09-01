@@ -21,12 +21,19 @@ test('caption controls and live/final layout retain their no-shift structure', (
   assert.match(html, /id="liveMeta"/);
   assert.match(html, /id="liveTimestamp"/);
   assert.match(html, /id="liveIdentity"/);
+  assert.match(html, /id="liveStableOriginal"/);
+  assert.match(html, /id="liveChangingOriginal"/);
+  assert.match(html, /id="captionEditDialog"[^>]*aria-labelledby="captionEditTitle"/);
+  assert.match(html, /id="captionEditOriginal"[^>]*required/);
 
   assert.match(css, /\.segment\s*{[^}]*padding-inline-start:\s*14px;[^}]*border-inline-start:\s*3px solid transparent;/s);
+  assert.match(css, /body\.phone \.segment-edit\s*{\s*opacity:\s*1;/);
   assert.match(css, /body\.show-timestamps \.segment \.timestamp\s*{\s*display:\s*inline;/);
   assert.match(css, /\.segment \.timestamp\s*{\s*display:\s*none;/);
 
   assert.match(app, /function setTimestamps\(on\)/);
   assert.match(app, /localStorage\.setItem\('lc\.timestamps'/);
   assert.match(app, /stream\.displayStartMs/);
+  assert.match(app, /edit\.setAttribute\('aria-label'/);
+  assert.match(app, /segment\.node\?\.querySelector\('\.segment-edit'\)\?\.focus\(\)/);
 });

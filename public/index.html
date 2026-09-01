@@ -150,8 +150,8 @@
     <p class="meta" id="liveMeta">
       <span class="timestamp mono" id="liveTimestamp"></span><span class="identity" id="liveIdentity"></span>
     </p>
-    <p class="original" id="liveOriginal"></p>
-    <p class="translation" id="liveTranslation"></p>
+    <p class="original" id="liveOriginal"><span id="liveStableOriginal"></span><span id="liveChangingOriginal" class="changing"></span></p>
+    <p class="translation" id="liveTranslation"><span id="liveStableTranslation"></span><span id="liveChangingTranslation" class="changing"></span></p>
   </div>
 
   <button id="jumpBtn" class="jump" type="button" hidden>
@@ -281,6 +281,25 @@
       <button id="audienceEnd" type="button" class="ghost danger" hidden>结束字幕直播间</button>
       <span class="spacer"></span>
       <button value="close" class="primary" type="submit">完成</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="captionEditDialog" class="terms caption-edit-dialog" aria-labelledby="captionEditTitle">
+  <form id="captionEditForm" method="dialog">
+    <h2 id="captionEditTitle">修正字幕</h2>
+    <p id="captionEditHint" class="hint"></p>
+
+    <label for="captionEditOriginal">原文</label>
+    <textarea id="captionEditOriginal" rows="4" maxlength="3000" required></textarea>
+
+    <label for="captionEditTranslation">译文<span class="hint-inline">可留空</span></label>
+    <textarea id="captionEditTranslation" rows="4" maxlength="3000"></textarea>
+
+    <div class="terms-actions">
+      <span class="spacer"></span>
+      <button value="cancel" class="ghost" type="submit">取消</button>
+      <button value="save" class="primary" type="submit">保存修正</button>
     </div>
   </form>
 </dialog>

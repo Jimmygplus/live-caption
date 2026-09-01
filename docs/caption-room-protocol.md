@@ -15,7 +15,7 @@ This document is the durable handoff for the encrypted QR caption room. GitHub I
 
 1. The host publishes throttled `draft` captions. They are broadcast but not persisted.
 2. The host publishes `final` captions with `persist: true`.
-3. Later translation or correction events reuse the same `captionId` and increase `revision`.
+3. Later translation or correction events reuse the same `captionId` and increase `revision`. The host applies async translation against the revision that started the request, so a late response cannot overwrite a newer manual correction.
 4. QR clients upsert by `captionId`, ignore stale revisions, and remove `live-draft` when a final speech caption arrives.
 5. Participant text is encrypted to the host. The host validates and renders it, publishes it as a typed final caption, then acknowledges the participant message.
 6. Reconnecting QR clients receive at most 100 recent final ciphertext envelopes. Drafts are never replayed.

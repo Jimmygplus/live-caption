@@ -4,6 +4,7 @@ import {
   hashAudienceToken,
 } from './audience-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
+import { isNewerCaptionRevision } from './caption-state.js';
 
 const form = document.querySelector('#messageForm');
 const nameInput = document.querySelector('#name');
@@ -159,7 +160,7 @@ function updateCaptionToggle() {
 
 function renderCaption(payload) {
   const current = captions.get(payload.captionId);
-  if (current && current.revision >= payload.revision) return;
+  if (current && !isNewerCaptionRevision(current.revision, payload.revision)) return;
   const shouldFollow = nearCaptionBottom();
   if (payload.replacesDraft && payload.captionId !== 'live-draft') removeCaption('live-draft');
 
