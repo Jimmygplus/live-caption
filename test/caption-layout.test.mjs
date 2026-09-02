@@ -37,3 +37,22 @@ test('caption controls and live/final layout retain their no-shift structure', (
   assert.match(app, /edit\.setAttribute\('aria-label'/);
   assert.match(app, /segment\.node\?\.querySelector\('\.segment-edit'\)\?\.focus\(\)/);
 });
+
+test('v2 markup serves the whole element contract app.js depends on', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const v2 = await readFile(new URL('../public/v2.html', import.meta.url), 'utf8');
+
+  // app.js is shared verbatim between layouts, so a layout that omits one id
+  // fails at the first $() call rather than anywhere near the cause.
+  const required = [...new Set([...app.matchAll(/\$\('([a-zA-Z0-9]+)'\)/g)].map((m) => m[1]))];
+  const ids = [...v2.matchAll(/id="([a-zA-Z0-9]+)"/g)].map((m) => m[1]);
+  const present = new Set(ids);
+
+  assert.ok(required.length > 100, 'sanity: the contract should be large');
+  assert.deepEqual(required.filter((id) => !present.has(id)), [], 'missing ids');
+  assert.deepEqual(ids.filter((id, i) => ids.indexOf(id) !== i), [], 'duplicate ids');
+
+  // app.js re-parents #startBtn on layout changes and needs somewhere to put it.
+  assert.match(v2, /id="startHome"/);
+  assert.match(app, /getElementById\('startHome'\)/);
+});

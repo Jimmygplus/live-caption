@@ -92,8 +92,9 @@ jobs:
           sed -i "s|\./pcm-worklet\.js|./pcm-worklet.js?v=$v|; s|\./glossaries\.json|./glossaries.json?v=$v|; s|\./qr\.js|./qr.js?v=$v|; s|\./audio-check\.js|./audio-check.js?v=$v|; s|\./audio-source\.js|./audio-source.js?v=$v|; s|\./font-size\.js|./font-size.js?v=$v|; s|\./caption-state\.js|./caption-state.js?v=$v|; s|\./audience-crypto\.js|./audience-crypto.js?v=$v|; s|\./join-crypto\.js|./join-crypto.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|; s|\./trial-code\.js|./trial-code.js?v=$v|; s|\./trial-config\.js|./trial-config.js?v=$v|" public/app.js
           sed -i "s|\./audience-crypto\.js|./audience-crypto.js?v=$v|; s|\./caption-state\.js|./caption-state.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|" public/input.js
           sed -i "s|\./join-crypto\.js|./join-crypto.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|" public/join.js
+          sed -i "s|\./v2\.css|./v2.css?v=$v|; s|\./app\.js|./app.js?v=$v|" public/v2.html
           echo "stamped $v"
-          grep -Rho '\./[a-z-]*\.\(css\|js\)\?v=[0-9a-f]*' public/index.html public/input.html public/j.html public/app.js public/input.js public/join.js | sort -u
+          grep -Rho '\./[a-z-]*\.\(css\|js\)\?v=[0-9a-f]*' public/index.html public/input.html public/j.html public/app.js public/input.js public/join.js public/v2.html | sort -u
 
       - uses: actions/upload-pages-artifact@v3
         with:

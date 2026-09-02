@@ -1364,7 +1364,11 @@ function applyLayout() {
   el.body.classList.toggle('phone', phone);
   el.mobileBar.hidden = !phone;
 
+  // A layout can name where the button belongs on desktop; without such a slot
+  // it falls back to sitting beside the terms button, as the original bar does.
+  const home = document.getElementById('startHome');
   if (phone) el.mobileBar.append(el.startBtn);
+  else if (home) home.append(el.startBtn);
   else el.termsBtn.after(el.startBtn);
 
   if (!phone) closeSheet();
