@@ -18,12 +18,14 @@ import {
   hashAudienceToken,
   randomAudienceSecret,
 } from '../public/audience-crypto.js';
-import { AudienceRoom } from '../relay/src/index.js';
+import relayWorker, { AudienceRoom } from '../relay/src/index.js';
 import {
   createJoinKeyPair,
   formatRoomCode,
   joinVerificationCode,
   normalizeRoomCode,
+  isRoomCode,
+  ROOM_CODE_LENGTH,
   unwrapJoinSecret,
   wrapJoinSecret,
 } from '../public/join-crypto.js';
@@ -243,7 +245,7 @@ test('short-code join wraps room access for two approved clients and handles uns
   await room.fetch(new Request('https://audience-room/internal/init', {
     method: 'POST',
     body: JSON.stringify({
-      id: 'ABCDE23456',
+      id: 'K7M2P9',
       hostHash: await hashAudienceToken(hostSecret),
       joinHash: await hashAudienceToken(joinSecret),
       expiresAt: Date.now() + 60_000,
@@ -333,8 +335,13 @@ test('short-code join wraps room access for two approved clients and handles uns
 
   assert.equal(clients.length, 2);
   assert.ok(!JSON.stringify([...state.storage.values.values()]).includes(joinSecret));
-  assert.equal(normalizeRoomCode('abcde-23456'), 'ABCDE23456');
-  assert.equal(formatRoomCode('abcde23456'), 'ABCDE-23456');
+  assert.equal(normalizeRoomCode('k7m-2p9'), 'K7M2P9');
+  assert.equal(formatRoomCode('k7m2p9'), 'K7M-2P9');
+  assert.equal(isRoomCode('K7M2P9'), true);
+  // Normalisation alone cannot vet a room code: an unrelated id reduces to a
+  // plausible six characters, so isRoomCode() must judge the raw value.
+  assert.equal(normalizeRoomCode('caption-d785bd0c').length, ROOM_CODE_LENGTH);
+  assert.equal(isRoomCode('caption-d785bd0c'), false);
 });
 
 test('relay room authenticates peers, syncs encrypted captions and acknowledges display', async () => {
@@ -616,4 +623,59 @@ test('host controls combine signal threshold, link font sizes and default to sho
   assert.match(script, /level: \(data\) => showAudioLevel\(data\)/);
   assert.match(script, /audioCheck: \(samples\)/);
   assert.match(script, /processorOptions: \{ levelsOnly: true \}/);
+});
+
+function stubRelayEnv(respond) {
+  const minted = [];
+  return {
+    minted,
+    env: {
+      AUDIENCE_ROOMS: {
+        idFromName: (name) => ({ name }),
+        get: () => ({
+          fetch: async (_url, init) => {
+            const { id } = JSON.parse(init.body);
+            minted.push(id);
+            return respond(minted.length);
+          },
+        }),
+      },
+    },
+  };
+}
+
+function createRoomRequest() {
+  return new Request('https://relay.example/v1/rooms', {
+    method: 'POST',
+    headers: { origin: 'https://jimmygplus.github.io', 'content-type': 'application/json' },
+    body: JSON.stringify({ hostHash: 'a'.repeat(64), joinHash: 'b'.repeat(64) }),
+  });
+}
+
+test('relay mints a short room code and retries past a collision', async () => {
+  const ok = stubRelayEnv(() => new Response(null, { status: 204 }));
+  const created = await relayWorker.fetch(createRoomRequest(), ok.env);
+  assert.equal(created.status, 201);
+  const body = await created.json();
+  assert.equal(ok.minted.length, 1);
+  assert.equal(body.id, ok.minted[0]);
+  assert.equal(isRoomCode(body.id), true, 'minted id must be a valid short room code');
+
+  // A live room answers 409; the host should still get a room on a fresh code.
+  const collided = stubRelayEnv((attempt) => new Response(null, { status: attempt === 1 ? 409 : 204 }));
+  const retried = await relayWorker.fetch(createRoomRequest(), collided.env);
+  assert.equal(retried.status, 201);
+  assert.equal(collided.minted.length, 2);
+  assert.notEqual(collided.minted[0], collided.minted[1], 'retry must mint a fresh code');
+
+  // Exhausting every attempt surfaces a failure rather than looping forever.
+  const exhausted = stubRelayEnv(() => new Response(null, { status: 409 }));
+  const gaveUp = await relayWorker.fetch(createRoomRequest(), exhausted.env);
+  assert.equal(gaveUp.status, 503);
+  assert.equal(exhausted.minted.length, 5);
+
+  // A non-collision failure must not burn the remaining attempts.
+  const broken = stubRelayEnv(() => new Response(null, { status: 500 }));
+  assert.equal((await relayWorker.fetch(createRoomRequest(), broken.env)).status, 503);
+  assert.equal(broken.minted.length, 1);
 });

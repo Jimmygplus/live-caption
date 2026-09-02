@@ -6,13 +6,15 @@ const HOST_AWAY_MS = 30_000;
 const JOIN_REQUEST_TTL_MS = 60_000;
 const MAX_PENDING_JOIN_REQUESTS = 12;
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_LENGTH = 6;
+const ROOM_CODE_ATTEMPTS = 5;
 const ALLOWED_ORIGINS = new Set([
   'https://jimmygplus.github.io',
   'http://localhost:5175',
   'http://127.0.0.1:5175',
 ]);
 
-function randomRoomCode(length = 10) {
+function randomRoomCode(length = ROOM_CODE_LENGTH) {
   const values = crypto.getRandomValues(new Uint8Array(length));
   return [...values].map((value) => ROOM_CODE_ALPHABET[value % ROOM_CODE_ALPHABET.length]).join('');
 }
@@ -65,24 +67,29 @@ export default {
       if (!/^[0-9a-f]{64}$/.test(body.hostHash) || !/^[0-9a-f]{64}$/.test(body.joinHash)) {
         return json(request, { error: 'Invalid room credentials.' }, 400);
       }
-      const id = randomRoomCode();
       const expiresAt = Date.now() + ROOM_TTL_MS;
-      const roomId = env.AUDIENCE_ROOMS.idFromName(id);
-      const room = env.AUDIENCE_ROOMS.get(roomId);
-      const initialized = await room.fetch('https://audience-room/internal/init', {
-        method: 'POST',
-        body: JSON.stringify({
-          id,
-          hostHash: body.hostHash,
-          joinHash: body.joinHash,
-          expiresAt,
-        }),
-      });
-      if (!initialized.ok) return json(request, { error: 'Could not create room.' }, 503);
-      return json(request, { id, expiresAt }, 201);
+      // A short code is easier to read aloud but collides more often, and
+      // /internal/init answers 409 while the previous room is still live, so
+      // retry with a fresh code instead of failing the host outright.
+      for (let attempt = 0; attempt < ROOM_CODE_ATTEMPTS; attempt += 1) {
+        const id = randomRoomCode();
+        const room = env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(id));
+        const initialized = await room.fetch('https://audience-room/internal/init', {
+          method: 'POST',
+          body: JSON.stringify({
+            id,
+            hostHash: body.hostHash,
+            joinHash: body.joinHash,
+            expiresAt,
+          }),
+        });
+        if (initialized.ok) return json(request, { id, expiresAt }, 201);
+        if (initialized.status !== 409) break;
+      }
+      return json(request, { error: 'Could not create room.' }, 503);
     }
 
-    const closeMatch = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{8,32})\/close$/);
+    const closeMatch = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{6,32})\/close$/);
     if (closeMatch && request.method === 'POST') {
       let body;
       try { body = await request.json(); } catch { body = {}; }
@@ -99,7 +106,7 @@ export default {
       return json(request, { closed: true });
     }
 
-    const match = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{8,32})\/ws$/);
+    const match = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{6,32})\/ws$/);
     if (match && request.method === 'GET' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
       const roomId = env.AUDIENCE_ROOMS.idFromName(match[1]);
       const forwarded = new Request('https://audience-room/ws', request);

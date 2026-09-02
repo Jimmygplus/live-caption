@@ -37,7 +37,7 @@ import {
   randomAudienceSecret,
 } from './audience-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
-import { formatRoomCode, joinVerificationCode, wrapJoinSecret } from './join-crypto.js';
+import { formatRoomCode, isRoomCode, joinVerificationCode, wrapJoinSecret } from './join-crypto.js';
 import { TRIAL_BROKER_URL } from './trial-config.js';
 import { formatTrialCode, redeemTrialCode, validTrialCode } from './trial-code.js';
 
@@ -723,7 +723,7 @@ function showAudienceSession(session) {
   el.audienceLoading.hidden = true;
   el.audienceSession.hidden = false;
   el.audienceEnd.hidden = false;
-  const shortJoinSupported = session.transport === 'relay' && /^[A-HJ-NP-Z2-9]{10}$/.test(session.id);
+  const shortJoinSupported = session.transport === 'relay' && isRoomCode(session.id);
   el.audienceUrl.value = shortJoinSupported ? audienceShortJoinUrl(session) : joinUrl;
   el.audienceUrlLabel.textContent = shortJoinSupported ? '无法扫码？打开短地址' : '手机访问链接';
   el.audienceRoomCode.textContent = shortJoinSupported ? formatRoomCode(session.id) : '';
@@ -3181,7 +3181,7 @@ el.trialCode.addEventListener('input', () => {
 
 el.trialApply.addEventListener('click', () => {
   if (!validTrialCode(el.trialCode.value)) {
-    el.trialStatus.textContent = '请输入主持方提供的 10 位推荐码。';
+    el.trialStatus.textContent = '请输入主持方提供的 8 位推荐码。';
     el.trialStatus.dataset.state = 'error';
     el.trialCode.focus();
     return;

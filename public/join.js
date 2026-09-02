@@ -3,6 +3,7 @@ import {
   formatRoomCode,
   joinVerificationCode,
   normalizeRoomCode,
+  ROOM_CODE_LENGTH,
   unwrapJoinSecret,
 } from './join-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
@@ -54,8 +55,8 @@ async function startJoin(rawCode) {
   const room = normalizeRoomCode(rawCode);
   roomInput.value = formatRoomCode(room);
   error.textContent = '';
-  if (room.length !== 10) {
-    error.textContent = '请输入主持人屏幕上的 10 位房间码。';
+  if (room.length !== ROOM_CODE_LENGTH) {
+    error.textContent = `请输入主持人屏幕上的 ${ROOM_CODE_LENGTH} 位房间码。`;
     roomInput.focus();
     return;
   }
@@ -141,5 +142,5 @@ form.addEventListener('submit', (event) => {
 cancelBtn.addEventListener('click', () => setIdle('申请已取消。'));
 
 const initialRoom = normalizeRoomCode(new URLSearchParams(location.search).get('r') || '');
-if (initialRoom.length === 10) void startJoin(initialRoom).catch(() => setIdle('无法建立安全加入请求，请稍后再试。'));
+if (initialRoom.length === ROOM_CODE_LENGTH) void startJoin(initialRoom).catch(() => setIdle('无法建立安全加入请求，请稍后再试。'));
 else roomInput.focus();

@@ -8,10 +8,12 @@ function option(name, fallback = '') {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
+const CODE_LENGTH = 8;
+
 function makeCode() {
-  const bytes = randomBytes(10);
+  const bytes = randomBytes(CODE_LENGTH);
   const raw = [...bytes].map((byte) => ALPHABET[byte % ALPHABET.length]).join('');
-  return `${raw.slice(0, 5)}-${raw.slice(5)}`;
+  return raw.match(/.{1,4}/g).join('-');
 }
 
 function hashCode(secret, code) {

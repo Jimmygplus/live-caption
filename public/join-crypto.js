@@ -108,11 +108,22 @@ export async function unwrapJoinSecret(privateKey, envelope, requestId) {
   return decoder.decode(plaintext);
 }
 
+// Kept in sync with ROOM_CODE_LENGTH in relay/src/index.js, which mints the code.
+export const ROOM_CODE_LENGTH = 6;
+
 export function normalizeRoomCode(value = '') {
-  return String(value).toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 10);
+  return String(value).toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, ROOM_CODE_LENGTH);
 }
 
 export function formatRoomCode(value = '') {
   const code = normalizeRoomCode(value);
-  return code.length > 5 ? `${code.slice(0, 5)}-${code.slice(5)}` : code;
+  return code.length > 3 ? `${code.slice(0, 3)}-${code.slice(3)}` : code;
+}
+
+// Tests the raw value on purpose: normalizeRoomCode() strips and truncates, so
+// unrelated ids (a UUID, say) can survive it at the right length and look valid.
+const ROOM_CODE_PATTERN = new RegExp(`^[A-HJ-NP-Z2-9]{${ROOM_CODE_LENGTH}}$`);
+
+export function isRoomCode(value = '') {
+  return ROOM_CODE_PATTERN.test(String(value));
 }

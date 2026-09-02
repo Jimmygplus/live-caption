@@ -16,7 +16,7 @@ const NOW = Date.parse('2026-09-02T05:00:00Z');
 const ORIGIN = 'https://jimmygplus.github.io';
 const HMAC_KEY = 'test-only-hmac-key-that-is-longer-than-thirty-two-chars';
 const SONIOX_KEY = 'test-only-soniox-long-lived-key';
-const VALID_CODE = 'ABCDE23456';
+const VALID_CODE = 'ABCD2345';
 
 class FakeStatement {
   constructor(db, sql) { this.db = db; this.sql = sql.replace(/\s+/g, ' ').trim(); this.args = []; }
@@ -128,15 +128,18 @@ function successfulSoniox(assertRequest = () => {}) {
 }
 
 test('trial code formatting is unambiguous and redemption uses a POST body', async () => {
-  assert.equal(normalizeTrialCode('abcde-23456'), VALID_CODE);
-  assert.equal(formatTrialCode('abcde23456'), 'ABCDE-23456');
-  assert.equal(validTrialCode('ABCDE-23456'), true);
+  assert.equal(normalizeTrialCode('abcd-2345'), VALID_CODE);
+  assert.equal(formatTrialCode('abcd2345'), 'ABCD-2345');
+  assert.equal(validTrialCode('ABCD-2345'), true);
   assert.equal(validTrialCode('ABCDE-10OIL'), false);
+  // Codes handed out before the length was reduced must still redeem.
+  assert.equal(validTrialCode('ABCDE-23456'), true);
+  assert.equal(formatTrialCode('abcde23456'), 'ABCD-E234-56');
 
   let captured;
   const result = await redeemTrialCode({
     brokerUrl: 'https://trial.example/',
-    code: 'ABCDE-23456',
+    code: 'ABCD-2345',
     fetchImpl: async (url, init) => {
       captured = { url, init };
       return Response.json({
@@ -171,7 +174,7 @@ test('trial worker atomically redeems one code and mints a restricted Soniox key
   });
 
   const [first, second] = await Promise.all([
-    worker.fetch(request('ABCDE-23456'), env),
+    worker.fetch(request('ABCD-2345'), env),
     worker.fetch(request(VALID_CODE), env),
   ]);
   assert.deepEqual([first.status, second.status].sort(), [200, 409]);
