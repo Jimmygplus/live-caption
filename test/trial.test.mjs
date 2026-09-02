@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { webcrypto } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { createTrialWorker, hashTrialCode } from '../trial/src/index.js';
+import { createTrialWorker, normalizeTrialCode, trialPasswords } from '../trial/src/index.js';
 import {
   formatTrialCode,
-  normalizeTrialCode,
+  normalizeTrialCode as normalizeClientCode,
   redeemTrialCode,
   validTrialCode,
 } from '../public/trial-code.js';
@@ -17,287 +14,206 @@ globalThis.crypto ||= webcrypto;
 
 const NOW = Date.parse('2026-09-02T05:00:00Z');
 const ORIGIN = 'https://jimmygplus.github.io';
-const HMAC_KEY = 'test-only-hmac-key-that-is-longer-than-thirty-two-chars';
+const SALT = 'test-only-rate-salt-that-is-longer-than-thirty-two-chars';
 const SONIOX_KEY = 'test-only-soniox-long-lived-key';
-const VALID_CODE = 'ABCD2345';
+const PASSWORD = 'ABCD2345';
+const TEMP_KEY = 'snx_temp_TEST.ONLY-TEMP_KEY+123456';
 
-class FakeStatement {
-  constructor(db, sql) { this.db = db; this.sql = sql.replace(/\s+/g, ' ').trim(); this.args = []; }
-  bind(...args) { this.args = args; return this; }
-
-  async first() {
-    if (this.sql.startsWith('INSERT INTO trial_rate_limits')) {
-      const [identity, window] = this.args;
-      const key = `${identity}:${window}`;
-      const attempts = (this.db.rate.get(key) || 0) + 1;
-      this.db.rate.set(key, attempts);
-      return { attempts };
-    }
-    if (this.sql.startsWith('UPDATE trial_codes SET redeemed_count = redeemed_count + 1')) {
-      const [hash, now] = this.args;
-      const code = this.db.codes.get(hash);
-      if (!code || !code.active || code.expires_at <= now || code.redeemed_count >= code.max_redemptions) {
-        return null;
-      }
-      code.redeemed_count += 1;
-      return { ...code };
-    }
-    throw new Error(`Unsupported first(): ${this.sql}`);
-  }
-
-  async run() {
-    if (this.sql.startsWith('INSERT INTO trial_redemptions')) {
-      const [id, codeHash, campaign, clientReferenceId, createdAt] = this.args;
-      if (this.db.redemptions.has(id)) throw new Error('duplicate redemption');
-      this.db.redemptions.set(id, {
-        id, code_hash: codeHash, campaign, client_reference_id: clientReferenceId,
-        status: 'reserved', created_at: createdAt,
-      });
-      return { success: true };
-    }
-    if (this.sql.startsWith("UPDATE trial_redemptions SET status = 'issued'")) {
-      const [completedAt, id] = this.args;
-      const row = this.db.redemptions.get(id);
-      if (row?.status === 'reserved') Object.assign(row, { status: 'issued', completed_at: completedAt });
-      return { success: true };
-    }
-    if (this.sql.startsWith("UPDATE trial_redemptions SET status = 'upstream_failed'")) {
-      const [completedAt, id] = this.args;
-      const row = this.db.redemptions.get(id);
-      if (row?.status === 'reserved') Object.assign(row, { status: 'upstream_failed', completed_at: completedAt });
-      return { success: true };
-    }
-    if (this.sql.startsWith('UPDATE trial_codes SET redeemed_count = MAX')) {
-      const [hash] = this.args;
-      const row = this.db.codes.get(hash);
-      if (row) row.redeemed_count = Math.max(0, row.redeemed_count - 1);
-      return { success: true };
-    }
-    throw new Error(`Unsupported run(): ${this.sql}`);
-  }
+// The worker now speaks exactly one statement against D1: a counter upsert
+// shared by the per-IP window and the per-day ceiling. Plus the cron sweep.
+function fakeDb() {
+  const counters = new Map();
+  const statement = (sql) => {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    let args = [];
+    const self = {
+      bind(...values) { args = values; return self; },
+      async first() {
+        if (!normalized.startsWith('INSERT INTO trial_rate_limits')) {
+          throw new Error(`Unsupported first(): ${normalized}`);
+        }
+        const key = `${args[0]}:${args[1]}`;
+        const attempts = (counters.get(key) || 0) + 1;
+        counters.set(key, attempts);
+        return { attempts };
+      },
+      async run() {
+        if (!normalized.startsWith('DELETE FROM trial_rate_limits')) {
+          throw new Error(`Unsupported run(): ${normalized}`);
+        }
+        for (const key of [...counters.keys()]) {
+          if (Number(key.split(':').pop()) < args[0]) counters.delete(key);
+        }
+        return { success: true };
+      },
+    };
+    return self;
+  };
+  return { counters, prepare: statement };
 }
 
-class FakeD1 {
-  constructor() {
-    this.codes = new Map();
-    this.redemptions = new Map();
-    this.rate = new Map();
-  }
-  prepare(sql) { return new FakeStatement(this, sql); }
-  async batch(statements) {
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
-  }
-}
-
-async function envWithCode(overrides = {}) {
-  const db = new FakeD1();
-  const hash = await hashTrialCode(HMAC_KEY, VALID_CODE);
-  db.codes.set(hash, {
-    campaign: 'launch', max_redemptions: 1, redeemed_count: 0,
-    expires_at: NOW + 86_400_000, active: 1,
-  });
+function env(overrides = {}) {
   return {
-    TRIAL_DB: db,
-    TRIAL_CODE_HMAC_KEY: HMAC_KEY,
+    TRIAL_DB: fakeDb(),
     SONIOX_API_KEY: SONIOX_KEY,
+    TRIAL_RATE_SALT: SALT,
+    TRIAL_PASSWORDS: `${PASSWORD},LAUNCH2026`,
     ALLOWED_ORIGINS: ORIGIN,
+    SONIOX_TEMP_KEY_URL: 'https://soniox.example/v1/auth/temporary-api-key',
     ...overrides,
   };
 }
 
-function request(code = VALID_CODE, origin = ORIGIN) {
+function request(code, { origin = ORIGIN, ip = '203.0.113.7' } = {}) {
   return new Request('https://trial.example/v1/trials/redeem', {
     method: 'POST',
-    headers: {
-      origin,
-      'content-type': 'application/json',
-      'cf-connecting-ip': '203.0.113.8',
-    },
+    headers: { origin, 'content-type': 'application/json', 'cf-connecting-ip': ip },
     body: JSON.stringify({ code }),
   });
 }
 
-function successfulSoniox(assertRequest = () => {}) {
-  return async (url, init) => {
-    assert.equal(url, 'https://api.soniox.com/v1/auth/temporary-api-key');
-    assertRequest(init);
-    return Response.json({
-      api_key: 'snx_temp_TEST.ONLY-TEMP_KEY+123456',
-      expires_at: '2026-09-02T05:01:00Z',
-    }, { status: 201 });
-  };
+function sonioxOk() {
+  return async () => Response.json({ api_key: TEMP_KEY, expires_at: '2026-09-02T05:01:00Z' }, { status: 201 });
 }
 
-test('trial code formatting is unambiguous and redemption uses a POST body', async () => {
-  assert.equal(normalizeTrialCode('abcd-2345'), VALID_CODE);
-  assert.equal(validTrialCode('ABCD-2345'), true);
+function worker(fetchImpl = sonioxOk()) {
+  return createTrialWorker({ fetchImpl, now: () => NOW });
+}
+
+test('a trial code is a shared password, normalised the same way on both sides', async () => {
+  assert.equal(normalizeClientCode('abcd-2345'), PASSWORD);
+  assert.equal(normalizeTrialCode('abcd-2345'), PASSWORD);
   // Hyphens are stripped, never re-inserted, so a chosen word survives typing.
-  assert.equal(formatTrialCode('abcd-2345'), 'ABCD2345');
-  assert.equal(formatTrialCode('launch2026'), 'LAUNCH2026');
-  // A campaign word may use the characters the generator itself avoids.
+  assert.equal(formatTrialCode('launch-2026'), 'LAUNCH2026');
   assert.equal(validTrialCode('LAUNCH2026'), true);
-  assert.equal(validTrialCode('JIMMY2026'), true);
-  // Codes issued at an earlier length still redeem.
-  assert.equal(validTrialCode('ABCDE-23456'), true);
-  // Too short to outrun the rate limiter; and nothing survives normalisation.
-  assert.equal(validTrialCode('TEST'), false);
+  assert.equal(validTrialCode('TEST'), false, 'too short to outrun the rate limiter');
   assert.equal(validTrialCode('中文推荐码'), false);
 
-  let captured;
-  const result = await redeemTrialCode({
-    brokerUrl: 'https://trial.example/',
-    code: 'ABCD-2345',
-    fetchImpl: async (url, init) => {
-      captured = { url, init };
-      return Response.json({
-        api_key: 'snx_temp_TEST.ONLY-TEMP_KEY+123456', expires_at: '2026-09-02T05:01:00Z',
-      });
-    },
-  });
-  assert.equal(captured.url, 'https://trial.example/v1/trials/redeem');
-  assert.equal(captured.init.method, 'POST');
-  assert.deepEqual(JSON.parse(captured.init.body), { code: VALID_CODE });
-  assert.ok(!captured.url.includes(VALID_CODE));
-  assert.match(result.api_key, /^snx_temp_/);
+  const configured = trialPasswords({ TRIAL_PASSWORDS: ' abcd-2345 , launch2026 ' });
+  assert.deepEqual([...configured], [PASSWORD, 'LAUNCH2026'], 'spacing and case must not matter');
+  assert.equal(trialPasswords({}).size, 0);
 });
 
-test('trial worker atomically redeems one code and mints a restricted Soniox key', async () => {
-  const env = await envWithCode();
-  let upstreamCalls = 0;
-  const worker = createTrialWorker({
-    now: () => NOW,
-    fetchImpl: successfulSoniox((init) => {
-      upstreamCalls += 1;
-      assert.equal(init.headers.authorization, `Bearer ${SONIOX_KEY}`);
-      assert.deepEqual(JSON.parse(init.body), {
-        usage_type: 'transcribe_websocket',
-        expires_in_seconds: 60,
-        single_use: true,
-        max_session_duration_seconds: 1800,
-        client_reference_id: JSON.parse(init.body).client_reference_id,
-      });
-      assert.match(JSON.parse(init.body).client_reference_id, /^trial_[0-9a-f]{32}$/);
-    }),
+test('the right password mints a restricted Soniox key and stays reusable', async () => {
+  let sent;
+  const e = env();
+  const w = worker(async (url, init) => {
+    sent = { url, body: JSON.parse(init.body), auth: init.headers.authorization };
+    return Response.json({ api_key: TEMP_KEY, expires_at: '2026-09-02T05:01:00Z' }, { status: 201 });
   });
 
-  const [first, second] = await Promise.all([
-    worker.fetch(request('ABCD-2345'), env),
-    worker.fetch(request(VALID_CODE), env),
-  ]);
-  assert.deepEqual([first.status, second.status].sort(), [200, 409]);
-  assert.equal(upstreamCalls, 1);
-  const success = first.ok ? await first.json() : await second.json();
-  assert.equal(success.trial_seconds, 1800);
-  assert.match(success.redemption_id, /^[0-9a-f-]{36}$/);
-  assert.equal([...env.TRIAL_DB.redemptions.values()][0].status, 'issued');
+  const first = await w.fetch(request(PASSWORD), e);
+  assert.equal(first.status, 200);
+  const body = await first.json();
+  assert.equal(body.api_key, TEMP_KEY);
+  assert.equal(body.trial_seconds, 30 * 60);
 
-  const stored = JSON.stringify({
-    codes: [...env.TRIAL_DB.codes], redemptions: [...env.TRIAL_DB.redemptions],
-  });
-  assert.ok(!stored.includes(VALID_CODE));
-  assert.ok(!stored.includes(SONIOX_KEY));
-  assert.ok(!stored.includes(success.api_key));
+  assert.equal(sent.auth, `Bearer ${SONIOX_KEY}`);
+  assert.equal(sent.body.single_use, true);
+  assert.equal(sent.body.expires_in_seconds, 60);
+  assert.equal(sent.body.max_session_duration_seconds, 30 * 60);
+
+  // The whole point of dropping redemption: the same password works again.
+  assert.equal((await w.fetch(request('abcd-2345'), e)).status, 200);
 });
 
-test('trial worker rejects unsafe requests, expired codes and repeated attempts', async () => {
-  const env = await envWithCode();
-  const worker = createTrialWorker({ now: () => NOW, fetchImpl: successfulSoniox() });
-  assert.equal((await worker.fetch(request(VALID_CODE, 'https://evil.example'), env)).status, 403);
+test('a wrong password is refused without spending the daily allowance', async () => {
+  const e = env({ TRIAL_DAILY_LIMIT: '2' });
+  const w = worker();
+
+  for (let i = 0; i < 5; i += 1) {
+    const denied = await w.fetch(request('WRONGPASS', { ip: `198.51.100.${i}` }), e);
+    assert.equal(denied.status, 403);
+  }
+  // Guesses must not have consumed the two trials available today.
+  assert.equal((await w.fetch(request(PASSWORD, { ip: '203.0.113.1' }), e)).status, 200);
+  assert.equal((await w.fetch(request(PASSWORD, { ip: '203.0.113.2' }), e)).status, 200);
+});
+
+test('the daily ceiling bounds what a leaked password can cost', async () => {
+  const e = env({ TRIAL_DAILY_LIMIT: '3' });
+  const w = worker();
+  const from = (i) => request(PASSWORD, { ip: `192.0.2.${i}` });
+
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal((await w.fetch(from(i), e)).status, 200, `trial ${i} should be allowed`);
+  }
+  const over = await w.fetch(from(4), e);
+  assert.equal(over.status, 503);
+  assert.match((await over.json()).error, /今日体验名额/);
+
+  // A new day releases the ceiling again.
+  const tomorrow = createTrialWorker({ fetchImpl: sonioxOk(), now: () => NOW + 24 * 60 * 60 * 1_000 });
+  assert.equal((await tomorrow.fetch(from(5), e)).status, 200);
+});
+
+test('trial worker rejects unsafe or unconfigured requests', async () => {
+  const w = worker();
+  assert.equal((await w.fetch(request(PASSWORD, { origin: 'https://evil.example' }), env())).status, 403);
+  assert.equal((await w.fetch(request('bad'), env())).status, 400);
+
+  const wrongType = new Request('https://trial.example/v1/trials/redeem', {
+    method: 'POST',
+    headers: { origin: ORIGIN, 'content-type': 'text/plain' },
+    body: '{}',
+  });
+  assert.equal((await w.fetch(wrongType, env())).status, 415);
+
   const oversized = new Request('https://trial.example/v1/trials/redeem', {
     method: 'POST',
     headers: { origin: ORIGIN, 'content-type': 'application/json' },
-    body: JSON.stringify({ code: VALID_CODE, padding: 'x'.repeat(2_000) }),
+    body: JSON.stringify({ code: PASSWORD, padding: 'x'.repeat(2_000) }),
   });
-  assert.equal((await worker.fetch(oversized, env)).status, 413);
-  assert.equal((await worker.fetch(request('bad'), env)).status, 400);
+  assert.equal((await w.fetch(oversized, env())).status, 413);
 
-  const hash = await hashTrialCode(HMAC_KEY, VALID_CODE);
-  env.TRIAL_DB.codes.get(hash).expires_at = NOW - 1;
-  assert.equal((await worker.fetch(request(), env)).status, 409);
-  env.TRIAL_DB.codes.get(hash).expires_at = NOW + 1_000;
-  env.TRIAL_DB.codes.get(hash).redeemed_count = 1;
-  assert.equal((await worker.fetch(request(), env)).status, 409);
+  // No password configured must fail closed rather than let everyone through.
+  assert.equal((await w.fetch(request(PASSWORD), env({ TRIAL_PASSWORDS: '' }))).status, 503);
 });
 
-test('Soniox failure compensates the code so the user can retry', async () => {
-  const env = await envWithCode();
-  const failed = createTrialWorker({
-    now: () => NOW,
-    fetchImpl: async () => Response.json({ error: 'upstream unavailable' }, { status: 503 }),
-  });
-  const failedResponse = await failed.fetch(request(), env);
-  assert.equal(failedResponse.status, 502);
-  const hash = await hashTrialCode(HMAC_KEY, VALID_CODE);
-  assert.equal(env.TRIAL_DB.codes.get(hash).redeemed_count, 0);
-  assert.equal([...env.TRIAL_DB.redemptions.values()][0].status, 'upstream_failed');
-
-  const retried = createTrialWorker({ now: () => NOW, fetchImpl: successfulSoniox() });
-  assert.equal((await retried.fetch(request(), env)).status, 200);
+test('an upstream failure is reported without a key and without extra state', async () => {
+  const e = env();
+  const failing = worker(async () => Response.json({ error_type: 'unavailable' }, { status: 500 }));
+  const response = await failing.fetch(request(PASSWORD), e);
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).api_key, undefined);
 });
 
-test('trial worker rate-limits repeated guessing without storing raw IP addresses', async () => {
-  const env = await envWithCode();
-  const worker = createTrialWorker({ now: () => NOW, fetchImpl: successfulSoniox() });
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    assert.equal((await worker.fetch(request('ZZZZZ99999'), env)).status, 409);
+test('trial worker rate-limits repeated attempts without storing raw IP addresses', async () => {
+  const e = env();
+  const w = worker();
+  let limited = 0;
+  for (let i = 0; i < 12; i += 1) {
+    if ((await w.fetch(request(PASSWORD), e)).status === 429) limited += 1;
   }
-  assert.equal((await worker.fetch(request('ZZZZZ99999'), env)).status, 429);
-  assert.ok(!JSON.stringify([...env.TRIAL_DB.rate]).includes('203.0.113.8'));
+  assert.ok(limited > 0, 'a single address must eventually be throttled');
+  assert.ok(![...e.TRIAL_DB.counters.keys()].some((key) => key.includes('203.0.113.7')));
 });
 
-test('trial UI explains the single-session boundary and keeps code out of URLs', async () => {
+test('the cron sweep drops only windows that have closed', async () => {
+  const e = env();
+  const w = worker();
+  await w.fetch(request(PASSWORD), e);
+  const live = e.TRIAL_DB.counters.size;
+  assert.ok(live > 0);
+
+  e.TRIAL_DB.counters.set(`stale:${NOW - 2 * 24 * 60 * 60 * 1_000}`, 5);
+  await w.scheduled({}, e);
+
+  // Today's daily row starts at most 24h back, so the sweep must never take it
+  // — losing it mid-day would reset the ceiling and uncap the day's spend.
+  assert.equal(e.TRIAL_DB.counters.size, live, "today's counters must survive");
+  assert.ok(![...e.TRIAL_DB.counters.keys()].some((key) => key.startsWith('stale:')));
+});
+
+test('trial UI states the boundary and keeps the code out of the address bar', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const worker = await readFile(new URL('../trial/src/index.js', import.meta.url), 'utf8');
   assert.match(html, /推荐码免费体验 30 分钟/);
   assert.match(html, /刷新或断线不会保留剩余时间/);
-  assert.match(app, /点击“开始”时才会正式核销/);
   assert.match(worker, /max_session_duration_seconds: TRIAL_SECONDS/);
   assert.doesNotMatch(worker, /console\.(log|error).*code/i);
-});
-
-test('generated import SQL hashes custom codes exactly as the broker does', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'trial-codes-'));
-  const sqlPath = join(dir, 'import.sql');
-  const codesPath = join(dir, 'codes.txt');
-  // Lower case and hyphenated on purpose: the generator and the broker must
-  // normalise identically, or a custom code could never be redeemed at all.
-  const custom = 'launch-2026';
-
-  await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      'trial/scripts/generate-codes.mjs',
-      '--code', custom,
-      '--count', '2',
-      '--campaign', 'test-campaign',
-      '--expires', '2099-01-01T00:00:00Z',
-      '--sql', sqlPath,
-      '--codes', codesPath,
-    ], {
-      cwd: new URL('..', import.meta.url),
-      env: { ...process.env, TRIAL_CODE_HMAC_KEY: HMAC_KEY },
-      stdio: 'ignore',
-    });
-    child.on('error', reject);
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`generator exited ${code}`))));
-  });
-
-  const sql = await readFile(sqlPath, 'utf8');
-  const codes = (await readFile(codesPath, 'utf8')).trim().split('\n');
-
-  assert.equal(codes.length, 3, 'one custom code plus two random ones');
-  assert.equal(codes[0], custom, 'a custom code is written back verbatim');
-
-  // The broker looks a code up by this hash, so the SQL must carry the same one.
-  assert.ok(sql.includes(await hashTrialCode(HMAC_KEY, 'LAUNCH2026')));
-  assert.ok(sql.includes(await hashTrialCode(HMAC_KEY, custom)), 'case and hyphens must not matter');
-
-  // Random codes stay inside the unambiguous alphabet even though custom ones need not.
-  for (const code of codes.slice(1)) {
-    assert.match(code.replaceAll('-', ''), /^[A-HJ-NP-Z2-9]{8}$/);
-  }
-
-  await rm(dir, { recursive: true, force: true });
+  // A shared ?k= link must not leave the code sitting in the URL afterwards.
+  assert.match(app, /searchParams\.delete\('k'\)/);
+  assert.match(app, /history\.replaceState/);
 });

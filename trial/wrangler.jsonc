@@ -4,7 +4,10 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-02",
   "vars": {
-    "ALLOWED_ORIGINS": "https://jimmygplus.github.io,http://localhost:5175,http://127.0.0.1:5175"
+    "ALLOWED_ORIGINS": "https://jimmygplus.github.io,http://localhost:5175,http://127.0.0.1:5175",
+    // Ceiling on trials handed out per day. At roughly 0.12 AUD per streamed
+    // hour a trial costs about 0.06 AUD, so this caps a runaway day near 1.2 AUD.
+    "TRIAL_DAILY_LIMIT": "20"
   },
   "d1_databases": [
     {

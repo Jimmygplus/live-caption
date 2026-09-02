@@ -4,14 +4,19 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:5175',
 ];
 const SONIOX_TEMP_KEY_URL = 'https://api.soniox.com/v1/auth/temporary-api-key';
-// Wider than the generator's alphabet: generated codes avoid 0/O/1/I so they
-// survive being transcribed, but a campaign's own word carries that context
-// itself. The minimum length is what bounds guessing, alongside the rate limit.
+// A trial code is a shared password, not a per-person voucher: several people
+// may hold the same one and use it repeatedly. These bounds only keep
+// pathological input out; the daily cap is what bounds spend.
 const CODE_PATTERN = /^[A-Z0-9]{6,32}$/;
 const MAX_BODY_BYTES = 1_024;
 const RATE_WINDOW_MS = 10 * 60 * 1_000;
 const RATE_ATTEMPTS = 10;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_DAILY_LIMIT = 20;
 const TRIAL_SECONDS = 30 * 60;
+// Reserved identity sharing trial_rate_limits with the per-IP rows. Real
+// identities are base64url SHA-256 digests — 43 characters, never this word.
+const DAILY_IDENTITY = 'daily';
 
 const encoder = new TextEncoder();
 
@@ -56,6 +61,13 @@ export function normalizeTrialCode(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+export function trialPasswords(env) {
+  return new Set(String(env.TRIAL_PASSWORDS || '')
+    .split(',')
+    .map(normalizeTrialCode)
+    .filter(Boolean));
+}
+
 function base64Url(bytes) {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -69,14 +81,8 @@ async function hmac(secret, value) {
   return base64Url(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value))));
 }
 
-export async function hashTrialCode(secret, value) {
-  return hmac(secret, `code:${normalizeTrialCode(value)}`);
-}
-
-async function checkRateLimit(env, request, now) {
-  const address = request.headers.get('cf-connecting-ip') || 'unknown';
-  const identity = await hmac(env.TRIAL_CODE_HMAC_KEY, `rate:${address}`);
-  const windowStart = Math.floor(now / RATE_WINDOW_MS) * RATE_WINDOW_MS;
+// One counter serves both limits: a per-IP window and a global per-day window.
+async function bumpCounter(env, identity, windowStart) {
   const row = await env.TRIAL_DB.prepare(`
     INSERT INTO trial_rate_limits (identity_hash, window_start, attempts)
     VALUES (?, ?, 1)
@@ -84,24 +90,24 @@ async function checkRateLimit(env, request, now) {
     DO UPDATE SET attempts = attempts + 1
     RETURNING attempts
   `).bind(identity, windowStart).first();
-  return Number(row?.attempts || 0) <= RATE_ATTEMPTS;
+  return Number(row?.attempts || 0);
 }
 
-async function releaseRedemption(env, redemptionId, codeHash, now) {
-  await env.TRIAL_DB.batch([
-    env.TRIAL_DB.prepare(`
-      UPDATE trial_redemptions SET status = 'upstream_failed', completed_at = ?
-      WHERE id = ? AND status = 'reserved'
-    `).bind(now, redemptionId),
-    env.TRIAL_DB.prepare(`
-      UPDATE trial_codes SET redeemed_count = MAX(0, redeemed_count - 1)
-      WHERE code_hash = ?
-    `).bind(codeHash),
-  ]);
+async function withinRateLimit(env, request, now) {
+  const address = request.headers.get('cf-connecting-ip') || 'unknown';
+  // Salted so the table never holds a reversible list of visitor addresses.
+  const identity = await hmac(env.TRIAL_RATE_SALT, `rate:${address}`);
+  const windowStart = Math.floor(now / RATE_WINDOW_MS) * RATE_WINDOW_MS;
+  return await bumpCounter(env, identity, windowStart) <= RATE_ATTEMPTS;
+}
+
+async function withinDailyLimit(env, now) {
+  const limit = Number(env.TRIAL_DAILY_LIMIT || DEFAULT_DAILY_LIMIT);
+  return await bumpCounter(env, DAILY_IDENTITY, Math.floor(now / DAY_MS) * DAY_MS) <= limit;
 }
 
 async function redeem(request, env, fetchImpl, now) {
-  if (!env.TRIAL_DB || !env.SONIOX_API_KEY || !env.TRIAL_CODE_HMAC_KEY) {
+  if (!env.TRIAL_DB || !env.SONIOX_API_KEY || !env.TRIAL_RATE_SALT || !trialPasswords(env).size) {
     return json(request, env, { error: '体验服务尚未配置。' }, 503);
   }
   const contentLength = Number(request.headers.get('content-length') || 0);
@@ -111,7 +117,7 @@ async function redeem(request, env, fetchImpl, now) {
   if (!String(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) {
     return json(request, env, { error: '请求格式无效。' }, 415);
   }
-  if (!await checkRateLimit(env, request, now)) {
+  if (!await withinRateLimit(env, request, now)) {
     return json(request, env, { error: '尝试次数过多，请十分钟后再试。' }, 429);
   }
 
@@ -126,35 +132,15 @@ async function redeem(request, env, fetchImpl, now) {
   if (!CODE_PATTERN.test(code)) {
     return json(request, env, { error: '请输入有效的推荐码（至少 6 位字母或数字）。' }, 400);
   }
-
-  const codeHash = await hashTrialCode(env.TRIAL_CODE_HMAC_KEY, code);
-  const claimed = await env.TRIAL_DB.prepare(`
-    UPDATE trial_codes
-    SET redeemed_count = redeemed_count + 1
-    WHERE code_hash = ?
-      AND active = 1
-      AND expires_at > ?
-      AND redeemed_count < max_redemptions
-    RETURNING campaign, redeemed_count, max_redemptions, expires_at
-  `).bind(codeHash, now).first();
-  if (!claimed) {
-    return json(request, env, { error: '推荐码无效、已使用或已过期。' }, 409);
+  if (!trialPasswords(env).has(code)) {
+    return json(request, env, { error: '推荐码无效。' }, 403);
   }
 
-  const redemptionId = crypto.randomUUID();
-  const clientReferenceId = `trial_${redemptionId.replaceAll('-', '')}`;
-  try {
-    await env.TRIAL_DB.prepare(`
-      INSERT INTO trial_redemptions
-        (id, code_hash, campaign, client_reference_id, status, created_at)
-      VALUES (?, ?, ?, ?, 'reserved', ?)
-    `).bind(redemptionId, codeHash, claimed.campaign, clientReferenceId, now).run();
-  } catch {
-    await env.TRIAL_DB.prepare(`
-      UPDATE trial_codes SET redeemed_count = MAX(0, redeemed_count - 1)
-      WHERE code_hash = ?
-    `).bind(codeHash).run();
-    return json(request, env, { error: '暂时无法核销推荐码，请稍后再试。' }, 503);
+  // Counted only after the code checks out, so wrong guesses cannot exhaust the
+  // day's allowance. The count is not rolled back if Soniox then fails: an
+  // approximate cap is worth far less complexity than an exact one.
+  if (!await withinDailyLimit(env, now)) {
+    return json(request, env, { error: '今日体验名额已用完，请明天再试。' }, 503);
   }
 
   let upstream;
@@ -170,12 +156,11 @@ async function redeem(request, env, fetchImpl, now) {
         expires_in_seconds: 60,
         single_use: true,
         max_session_duration_seconds: TRIAL_SECONDS,
-        client_reference_id: clientReferenceId,
+        client_reference_id: 'live-caption-trial',
       }),
     });
   } catch {
-    await releaseRedemption(env, redemptionId, codeHash, now);
-    return json(request, env, { error: '暂时无法连接字幕服务，推荐码未消耗。' }, 502);
+    return json(request, env, { error: '暂时无法连接字幕服务，请稍后再试。' }, 502);
   }
 
   const result = await upstream.json().catch(() => ({}));
@@ -193,20 +178,13 @@ async function redeem(request, env, fetchImpl, now) {
         ? result.validation_errors.map((item) => item.location).filter(Boolean)
         : [],
     });
-    await releaseRedemption(env, redemptionId, codeHash, now);
-    return json(request, env, { error: '字幕服务暂时不可用，推荐码未消耗。' }, 502);
+    return json(request, env, { error: '字幕服务暂时不可用，请稍后再试。' }, 502);
   }
-
-  await env.TRIAL_DB.prepare(`
-    UPDATE trial_redemptions SET status = 'issued', completed_at = ?
-    WHERE id = ? AND status = 'reserved'
-  `).bind(now, redemptionId).run();
 
   return json(request, env, {
     api_key: result.api_key,
     expires_at: result.expires_at,
     trial_seconds: TRIAL_SECONDS,
-    redemption_id: redemptionId,
   });
 }
 
@@ -230,10 +208,11 @@ export function createTrialWorker({ fetchImpl = fetch, now = () => Date.now() } 
       return json(request, env, { error: 'Not found.' }, 404);
     },
     async scheduled(_controller, env) {
-      const cutoff = now() - 24 * 60 * 60 * 1_000;
+      // A day's counter row is at most 24h old while that day is current, so
+      // this only ever removes windows that have already closed.
       await env.TRIAL_DB.prepare(
         'DELETE FROM trial_rate_limits WHERE window_start < ?',
-      ).bind(cutoff).run();
+      ).bind(now() - DAY_MS).run();
     },
   };
 }

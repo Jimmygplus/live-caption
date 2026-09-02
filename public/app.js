@@ -3165,7 +3165,7 @@ el.keysBtn.addEventListener('click', () => {
   el.trialSection.hidden = !(isByok() && TRIAL_BROKER_URL);
   el.trialCode.value = formatTrialCode(app.trial.code);
   el.trialStatus.textContent = app.trial.code
-    ? '推荐码已准备；点击“开始”时才会正式核销。'
+    ? '推荐码已就绪；点击“开始”后连接 Soniox。'
     : '';
   el.trialStatus.dataset.state = app.trial.code ? 'ready' : '';
   el.keysDialog.showModal();
@@ -3179,14 +3179,9 @@ el.trialCode.addEventListener('input', () => {
   el.trialStatus.dataset.state = '';
 });
 
-el.trialApply.addEventListener('click', () => {
-  if (!validTrialCode(el.trialCode.value)) {
-    el.trialStatus.textContent = '请输入主持方提供的推荐码。';
-    el.trialStatus.dataset.state = 'error';
-    el.trialCode.focus();
-    return;
-  }
-  app.trial.code = formatTrialCode(el.trialCode.value);
+function applyTrialCode(value, { silent = false } = {}) {
+  if (!validTrialCode(value)) return false;
+  app.trial.code = formatTrialCode(value);
   app.config.engines.soniox = true;
   if (![...el.engine.options].some((option) => option.value === 'soniox')) {
     el.engine.prepend(new Option('Soniox（30 分钟体验）', 'soniox'));
@@ -3194,11 +3189,39 @@ el.trialApply.addEventListener('click', () => {
   el.engine.value = 'soniox';
   onEngineChange();
   el.startBtn.disabled = false;
-  el.trialStatus.textContent = '推荐码已准备；点击“开始”时才会正式核销。';
+  el.trialStatus.textContent = '推荐码已就绪；点击“开始”后连接 Soniox。';
   el.trialStatus.dataset.state = 'ready';
+  if (!silent) {
+    showNotice('推荐码已就绪。点击“开始”即可使用一次最长 30 分钟的 Soniox 字幕体验。');
+  }
+  return true;
+}
+
+el.trialApply.addEventListener('click', () => {
+  if (!applyTrialCode(el.trialCode.value)) {
+    el.trialStatus.textContent = '请输入主持方提供的推荐码。';
+    el.trialStatus.dataset.state = 'error';
+    el.trialCode.focus();
+    return;
+  }
   el.keysDialog.close('trial');
-  showNotice('推荐码已准备。点击“开始”后才会核销，并开启一次最长 30 分钟的 Soniox 字幕体验。');
 });
+
+// A shared link can carry the code: ?k=LAUNCH2026 saves the recipient from
+// typing it. Stripped from the URL afterwards so it does not linger in the
+// address bar, in a screenshot, or in whatever they paste onward.
+{
+  const url = new URL(location.href);
+  const shared = url.searchParams.get('k');
+  if (shared) {
+    url.searchParams.delete('k');
+    history.replaceState(null, '', url.href);
+    if (applyTrialCode(shared, { silent: true })) {
+      el.trialCode.value = formatTrialCode(shared);
+      showNotice('已通过分享链接载入推荐码。点击“开始”即可使用 30 分钟 Soniox 字幕体验。');
+    }
+  }
+}
 
 el.keysClear.addEventListener('click', () => {
   keys.soniox = '';

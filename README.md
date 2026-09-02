@@ -8,7 +8,7 @@
 
 - 实时字幕与双向翻译，原文和译文始终分层显示。
 - 会前音频体检：检测说话音量、环境底噪、削波和静音，并给出可选的收音门限。
-- 一次性推荐码可兑换一次最长 30 分钟的 Soniox 高质量字幕体验。
+- 用推荐码（共享密码）即可获得一次最长 30 分钟的 Soniox 高质量字幕体验。
 - 支持系统默认麦克风、指定麦克风、标签页音频和系统声音。
 - 字幕直播间：可扫码直接加入，也可输入短地址和 6 位房间码，经主持人核对后安全加入。
 - 定稿字幕可修正；修正会同步到主持端、扫码端和导出文件。
@@ -22,7 +22,7 @@
 
 | 模式 | 适合场景 | 字幕与翻译 | 多端参与 |
 |---|---|---|---|
-| 静态站点 | GitHub Pages、Cloudflare Pages、公开分享 | 用户配置自己的密钥，或用推荐码取得一次性 Soniox 临时 Key | 通过独立 Cloudflare relay 同步端到端加密数据 |
+| 静态站点 | GitHub Pages、Cloudflare Pages、公开分享 | 用户配置自己的密钥，或用推荐码取得 Soniox 临时 Key | 通过独立 Cloudflare relay 同步端到端加密数据 |
 | Node 服务 | 本地运行、私有部署、服务端密钥 | 服务端签发 Soniox 临时令牌，并可代理腾讯云、混元或 Claude 翻译 | 提供进程内文字输入房间 |
 
 静态模式没有构建步骤，`public/` 本身就是完整站点。应用探测不到 `./api/config` 时会自动进入静态模式。
@@ -78,9 +78,8 @@ live-caption/
 │   ├── src/index.js              # Cloudflare Durable Object relay
 │   └── wrangler.jsonc            # relay 部署配置
 ├── trial/
-│   ├── src/index.js              # 推荐码核销与 Soniox 临时 Key broker
-│   ├── migrations/               # D1 推荐码、兑换和速率限制表
-│   ├── scripts/generate-codes.mjs # 离线生成推荐码与导入 SQL
+│   ├── src/index.js              # 推荐码校验与 Soniox 临时 Key broker
+│   ├── migrations/               # D1 速率限制与每日计数表
 │   └── wrangler.jsonc            # 独立 Worker 与 D1 绑定
 ├── docs/caption-room-protocol.md # 多端房间协议与安全模型
 ├── test/                         # Node 单元、协议与回归测试
@@ -108,8 +107,8 @@ AudioWorklet ── 电平与峰值 ──→ 会前体检 / 音量条 / 收音�
   └──────── 文字发言密文 + ACK ──────┘
 ```
 
-推荐码体验走另一条独立控制链：浏览器以 POST 把推荐码发给 Trial Worker，Worker 在 D1
-原子核销并用长期 Soniox Key 签发单次临时 Key；随后音频仍由浏览器直接连接 Soniox。
+推荐码体验走另一条独立控制链：浏览器以 POST 把推荐码发给 Trial Worker，Worker 比对
+Secret 中的共享密码并用长期 Soniox Key 签发单次临时 Key；随后音频仍由浏览器直接连接 Soniox。
 Trial Worker 不代理音频，字幕直播间 relay 也不持有厂商密钥。
 
 字幕识别和翻译是两层独立能力。Soniox 可以在同一条流中返回原文与内联译文；腾讯、混元和 Claude provider 则接收已经定稿的完整句子。这样可以替换翻译服务而不改动音频与字幕管线。
@@ -137,12 +136,13 @@ GitHub Pages 使用 `relay/` 中的 Cloudflare Durable Object。字幕和文字�
 
 ## 推荐码体验
 
-静态站可以让用户输入一次性推荐码，兑换一次最长 30 分钟的 Soniox 字幕。推荐码只在用户
-点击“开始”时通过 POST 核销，不进入 URL、浏览器持久存储或 analytics。Soniox 临时 Key
-必须在 60 秒内启用、只能建立一条流，并由 Soniox 服务端在 1800 秒时终止。
+静态站可以让用户输入推荐码，取得一次最长 30 分钟的 Soniox 字幕。推荐码是共享密码，
+可以反复使用，也可以放进分享链接 `?k=`——载入后会立刻从地址栏移除，不进入浏览器持久
+存储或 analytics。Soniox 临时 Key 必须在 60 秒内启用、只能建立一条流，并由 Soniox
+服务端在 1800 秒时终止。每日签发上限用于封住成本。
 
 第一版是一段连续体验：主动停止、刷新或断线都会结束本次权益，不保留剩余分钟。自有密钥、
-浏览器语音识别和 Node `/api/token` 不受影响。部署、Secrets 和推荐码生成见
+浏览器语音识别和 Node `/api/token` 不受影响。部署、Secrets 和分享方式见
 [`docs/trial-broker.md`](docs/trial-broker.md)。
 
 ## 无障碍与隐私
@@ -160,7 +160,7 @@ GitHub Pages 使用 `relay/` 中的 Cloudflare Durable Object。字幕和文字�
 npm test
 ```
 
-测试覆盖音频体检的安静语音、嘈杂房间、削波与静音样本，以及字幕 revision、布局、扫码加密房间、短码 ECDH 批准／拒绝流程、推荐码原子核销与上游失败补偿、relay 状态和腾讯 TC3 签名。
+测试覆盖音频体检的安静语音、嘈杂房间、削波与静音样本，以及字幕 revision、布局、扫码加密房间、短码 ECDH 批准／拒绝流程、推荐码共享密码校验、每日上限与上游失败处理、relay 状态和腾讯 TC3 签名。
 
 浏览器回归可用无麦克风的调试入口注入固定数据：
 

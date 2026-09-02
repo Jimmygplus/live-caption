@@ -1,6 +1,6 @@
 # 推荐码 Soniox 体验服务
 
-`trial/` 是公开静态站的最小付费能力控制面。它只接收推荐码、核销 D1 额度并签发 Soniox
+`trial/` 是公开静态站的最小付费能力控制面。它只校验推荐码、限流计数并签发 Soniox
 临时 Key；浏览器拿到临时 Key 后直接连接 Soniox，音频和字幕不经过这个 Worker。
 
 它必须和 `relay/` 分开部署。字幕 relay 的职责仍然只是转发端到端加密的房间数据，不能持有
@@ -8,24 +8,18 @@ Soniox 长期 Key。
 
 ## 权益规则
 
-- 推荐码默认只可兑换一次，也可以用 `--uses` 或在 D1 中显式设置 `max_redemptions`。
-- 推荐码为 6-32 位字母或数字，大小写和连字符都会被忽略。随机生成的码不含
-  `0/O/1/I`（避免转抄出错）；自定义活动码不受此限制，因为词本身提供了上下文。
-- 用 `--code` 指定自定义码，可与 `--count` 随机码同时使用：
-
-  ```
-  node trial/scripts/generate-codes.mjs \
-    --code 'LAUNCH2026,DOUBLE11' --count 20 --uses 50 \
-    --campaign shuang11 --expires '2026-12-31T00:00:00Z' \
-    --sql ~/.config/live-caption/import.sql \
-    --codes ~/.config/live-caption/codes.txt
-  ```
-
-  明文码只写进 `--codes` 指定的文件（权限 600，放仓库外）；D1 只收哈希。
+- 推荐码是**共享密码**，不是一次性券：同一个码可以给多个人、反复使用。
+- 密码存在 Worker Secret 里，前端代码中没有任何秘密。
+- 每天签发上限由 `TRIAL_DAILY_LIMIT` 控制（默认 20）。按 Soniox 约 0.12 AUD/小时算，
+  一次体验约 0.06 AUD，20 次的上限把失控的一天封在 1.2 AUD 左右。
+- 密码错误**不消耗**当日名额——先验密码再计数，否则乱猜就能把配额耗光。
+- 单 IP 十分钟内最多 10 次尝试。
 - 临时 Key 的启用窗口是 60 秒，`single_use` 为 `true`。
 - 每条 Soniox WebSocket 最长运行 1800 秒，由 Soniox 服务端强制关闭。
 - 停止、刷新或断线后不恢复剩余分钟。
-- `client_reference_id` 由 Worker 生成并绑定到临时 Key，可关联 Soniox usage logs。
+
+想换密码就重新 `wrangler secret put TRIAL_PASSWORDS`，旧密码立刻失效——这是唯一的
+“作废”操作，不需要查表或核销。
 
 ## 创建 D1
 
@@ -48,36 +42,28 @@ Wrangler 隐藏输入，不要写入 `.env`、命令参数或仓库：
 npx wrangler secret put SONIOX_API_KEY --config trial/wrangler.jsonc
 ```
 
-推荐码使用另一个至少 32 字节的 HMAC Secret。保存到仓库外、限制文件权限，并把同一个值
-交给 Worker 和离线推荐码生成器：
+推荐码本身也是 Secret，逗号分隔可以同时有多个（比如按分享渠道区分）：
 
 ```bash
-mkdir -p ~/.config/live-caption
-openssl rand -hex -out ~/.config/live-caption/trial-code-hmac-key 32
-chmod 600 ~/.config/live-caption/trial-code-hmac-key
-npx wrangler secret put TRIAL_CODE_HMAC_KEY --config trial/wrangler.jsonc \
-  < ~/.config/live-caption/trial-code-hmac-key
+npx wrangler secret put TRIAL_PASSWORDS --config trial/wrangler.jsonc
+# 提示符里输入，例如：LAUNCH2026,FRIENDS2026
 ```
 
-## 生成并导入推荐码
-
-代码和 SQL 必须输出到仓库外。以下示例生成 20 个在指定日期到期的一次性码：
+速率限制表里的 IP 需要一个盐，至少 32 字节，只用于哈希地址：
 
 ```bash
-TRIAL_CODE_HMAC_KEY="$(<~/.config/live-caption/trial-code-hmac-key)" \
-node trial/scripts/generate-codes.mjs \
-  --count 20 \
-  --campaign launch \
-  --expires 2026-10-01T00:00:00Z \
-  --codes /private/tmp/live-caption-launch-codes.txt \
-  --sql /private/tmp/live-caption-launch-codes.sql
-
-npx wrangler d1 execute live-caption-trials --remote --config trial/wrangler.jsonc \
-  --file /private/tmp/live-caption-launch-codes.sql
+npx wrangler secret put TRIAL_RATE_SALT --config trial/wrangler.jsonc
 ```
 
-`--codes` 文件是可兑换能力，权限默认为 600。交付后应移入密码管理器并删除临时文件；不要
-贴进 Issue、CI 日志、analytics 或提交到 Git。
+## 分享方式
+
+把密码放进链接，对方点开即可，不用手输：
+
+```
+https://jimmygplus.github.io/live-caption/?k=LAUNCH2026
+```
+
+前端读到 `?k=` 后会立刻把它从地址栏移除，所以不会留在浏览器历史、截图或对方转发的链接里。
 
 ## 部署
 
@@ -90,9 +76,10 @@ Worker 只接受 `ALLOWED_ORIGINS` 中的 Origin；增加正式域名时必须�
 
 ## 安全和运维
 
-- D1 只保存推荐码 HMAC、活动、次数、到期时间和脱敏兑换记录。
-- IP 只以 HMAC 形式进入十分钟速率限制桶；原始地址不落库，旧桶每日清理。
-- Soniox 上游失败会把兑换标记为 `upstream_failed` 并返还推荐码次数。
-- Soniox usage logs 通过 `trial_<redemption-id>` 关联用量；Worker 不保存临时 Key。
-- 推荐码只能控制兑换次数，不能可靠识别“同一个人”。需要邀请人奖励、账户或可恢复分钟数时，
-  应在商业版实现账户和额度账本，而不是依赖浏览器指纹。
+- D1 只保存两类计数：按 IP 哈希的十分钟窗口，和每日总量。没有码表，没有兑换记录。
+- IP 只以 HMAC 形式入库，原始地址不落库，过期窗口每日清理。
+- Worker 不保存临时 Key，日志只记布尔值和长度，不记密钥内容。
+- 上游失败不回滚当日计数：近似的上限比精确的上限便宜得多，也够用。
+- 共享密码无法识别“同一个人”，也无法阻止转发。它防的是随机访客，不是决心滥用的人；
+  真正兜底的是每日上限和 Soniox 侧的项目预算。
+- 需要账户、可恢复分钟数或邀请奖励时，应在商业版实现额度账本，而不是给密码加规则。
