@@ -347,7 +347,9 @@ body[data-view="ticker"] #live { animation: slide-in .45s cubic-bezier(.22, .61,
 /* ── Shared field and button primitives ──────────────────────────────────── */
 
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.field.grow { flex: 1 1 180px; }
+/* min-width, never flex-basis: a basis becomes the *height* the moment a
+   row turns into a column, which is where the empty gaps came from. */
+.field.grow { flex: 1 1 auto; min-width: 170px; }
 .field label { font-size: 11px; color: var(--dim); letter-spacing: .04em; }
 
 select, input[type="text"], input[type="password"], input[type="url"], textarea {
@@ -359,7 +361,12 @@ select, input[type="text"], input[type="password"], input[type="url"], textarea 
   border-radius: 9px;
   padding: 9px 11px;
   min-width: 0;
+  text-overflow: ellipsis;
 }
+
+/* Room for the native disclosure arrow: without it a long option name runs
+   straight under the glyph. */
+select { padding-right: 30px; }
 
 textarea { resize: vertical; line-height: 1.5; }
 select:disabled { opacity: .45; }
@@ -442,9 +449,17 @@ button { font: inherit; cursor: pointer; }
 
 .setup-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px 22px;
+  grid-template-columns: 1fr;
+  gap: 14px 24px;
   align-items: start;
+}
+
+/* Three numbered steps read as three columns. Letting them auto-fit dropped
+   step 3 onto a second row beneath step 1, which looks like a mistake rather
+   than a sequence. */
+@media (min-width: 760px) {
+  .setup-groups { grid-template-columns: .95fr 1.3fr 1.05fr; }
+  .advanced { grid-column: 1 / -1; }
 }
 
 .group { border: 0; margin: 0; padding: 0; min-width: 0; }
@@ -471,7 +486,19 @@ button { font: inherit; cursor: pointer; }
   border-radius: 50%;
 }
 
+/* Each row is shaped on purpose. Left to wrap on its own the language group
+   breaks after the direction picker and strands the swap button on its own
+   line, away from the two things it swaps. */
 .row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.row > .field { min-width: 0; }
+.group-lang .row > .field:first-child { flex: 1 1 100%; }
+.group-lang .row > .field:not(:first-child) { flex: 1 1 0; }
+.group-lang .row > .swap { flex: 0 0 auto; }
+/* Two independent choices, each with long option names: stacked they get the
+   full column width instead of truncating to "浏览...". */
+.group-engine .row > .field { flex: 1 1 100%; }
+.advanced .row > .field { flex: 1 1 0; }
+.group-audio .row > .ghost { flex: 0 0 auto; }
 .group-hint { margin: 7px 0 0; font-size: 11px; color: var(--dim); line-height: 1.5; }
 
 .advanced { grid-column: 1 / -1; }
@@ -499,6 +526,30 @@ button { font: inherit; cursor: pointer; }
 
 /* Idle shows the ordered form; a running session collapses it and brings the
    mid-session controls forward instead. Nothing moves in the DOM. */
+/* Idle is not a page with an empty stage above a footer of controls: the setup
+   IS the page. Bottom-aligning the stage puts the heading directly above the
+   console so the two read as one centred composition instead of drifting to
+   opposite edges of a large screen. */
+body[data-state="idle"] main#stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-block: 24px 16px;
+}
+body[data-state="idle"] .placeholder { margin-inline: auto; width: min(1020px, 100%); }
+body[data-state="idle"] .notice { margin-inline: auto; width: min(1020px, 100%); }
+body[data-state="idle"] .console {
+  width: min(1020px, 100%);
+  margin-inline: auto;
+  margin-bottom: clamp(18px, 11vh, 110px);
+  padding: 20px 22px;
+  background: var(--bg-bar);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+body[data-state="idle"] .console-action { align-self: end; }
+
 body[data-state="running"] .setup,
 body[data-state="connecting"] .setup { display: none; }
 body[data-state="running"] .live-tools,
@@ -539,6 +590,7 @@ body[data-state="connecting"] .live-tools { display: flex; }
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
   padding: 8px clamp(16px, 5vw, 72px);
   font-size: 12px;
   color: var(--muted);
@@ -546,7 +598,8 @@ body[data-state="connecting"] .live-tools { display: flex; }
   border-top: 1px solid var(--border);
 }
 
-.status-text { color: var(--muted); }
+.status-text { color: var(--muted); white-space: nowrap; }
+.error { min-width: 0; }
 
 .signal-control { display: flex; align-items: center; gap: 8px; }
 .signal-name { font-size: 11px; color: var(--dim); }
@@ -811,12 +864,16 @@ body.phone .console::before {
   background: var(--border);
 }
 
-body.phone .setup-groups { grid-template-columns: 1fr; }
-body.phone .row { flex-direction: column; align-items: stretch; }
-body.phone .field { width: 100%; }
+body.phone .setup-groups { grid-template-columns: 1fr; gap: 16px; }
+body.phone .field { min-width: 0; }
 body.phone select { width: 100%; padding: 11px 12px; font-size: 15px; }
-body.phone .ghost { padding: 12px; }
-body.phone .icon-only .lbl { position: static; width: auto; height: auto; clip: auto; clip-path: none; margin: 0; }
+body.phone .ghost { padding: 11px 12px; }
+
+/* Deliberate shapes per row instead of stacking everything: the two language
+   pickers belong side by side with the swap between them, and a check button
+   belongs next to the input it checks, not on its own line. */
+body.phone .row > .field { flex: 1 1 100%; }
+body.phone .group-audio .row > .field { flex: 1 1 auto; }
 body.phone .live-tools { flex-direction: column; align-items: stretch; gap: 12px; }
 body.phone .tool-cluster { flex-wrap: wrap; }
 body.phone .tool-cluster .ghost { flex: 1 1 auto; }
@@ -827,7 +884,11 @@ body.phone main#stage { padding: 14px 16px 24vh; }
 body.phone .segment { margin-bottom: 16px; padding-inline-start: 10px; border-inline-start-width: 2px; }
 body.phone[data-view="cinema"] .segment,
 body.phone[data-view="ticker"] .segment { padding-inline-start: 0; border-inline-start-width: 0; }
-body.phone .statusbar { padding: 7px 14px; gap: 9px; }
+/* A long error must not squeeze the fixed labels until they wrap one glyph per
+   line. Everything short stays on one line; the error takes its own row. */
+body.phone .statusbar { padding: 7px 14px; gap: 8px; flex-wrap: wrap; }
+body.phone .statusbar > * { white-space: nowrap; }
+body.phone .error { flex: 1 1 100%; white-space: normal; }
 body.phone .signal-name, body.phone #counter { display: none; }
 body.phone .signal-track { width: 86px; }
 body.phone .audio-level-status { max-width: 112px; }
