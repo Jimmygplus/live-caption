@@ -50,13 +50,23 @@ jobs:
           node-version: 22
 
       # Values set with `wrangler secret put` are stored apart from the script
-      # and survive a deploy, so CI never has to hold SONIOX_API_KEY or
-      # TRIAL_CODE_HMAC_KEY. Keep it that way.
+      # and survive a deploy, so CI never has to hold SONIOX_API_KEY,
+      # TRIAL_PASSWORDS or TRIAL_RATE_SALT. Keep it that way.
+      #
+      # Without a token the Workers are simply left alone and the static site
+      # still ships: failing here would block a frontend deploy on credentials
+      # that only gate the backend half.
       - name: Deploy caption relay
+        if: env.CLOUDFLARE_API_TOKEN != ''
         run: npx wrangler@${{ env.WRANGLER_VERSION }} deploy --config relay/wrangler.jsonc
 
       - name: Deploy trial broker
+        if: env.CLOUDFLARE_API_TOKEN != ''
         run: npx wrangler@${{ env.WRANGLER_VERSION }} deploy --config trial/wrangler.jsonc
+
+      - name: Warn that Workers were skipped
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::warning::CLOUDFLARE_API_TOKEN is not set — Workers were not deployed. Deploy them with wrangler, or add the secret to let CI do it."
 
   pages:
     needs: workers
