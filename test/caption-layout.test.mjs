@@ -56,3 +56,24 @@ test('v2 markup serves the whole element contract app.js depends on', async () =
   assert.match(v2, /id="startHome"/);
   assert.match(app, /getElementById\('startHome'\)/);
 });
+
+test('sample codes shown to users match the formats actually accepted', async () => {
+  const j = await readFile(new URL('../public/j.html', import.meta.url), 'utf8');
+  const { normalizeRoomCode, ROOM_CODE_LENGTH } = await import('../public/join-crypto.js');
+  const { validTrialCode } = await import('../public/trial-code.js');
+
+  // A placeholder is the only worked example most people ever see, so it drifts
+  // silently the moment a format changes — this one still read ABCDE-FGHIJ long
+  // after room codes became six characters, and I is not even in the alphabet.
+  const roomSample = j.match(/id="roomCode"[\s\S]*?placeholder="([^"]+)"/)?.[1];
+  assert.ok(roomSample, 'j.html must show a room code placeholder');
+  assert.equal(normalizeRoomCode(roomSample).length, ROOM_CODE_LENGTH);
+
+  for (const file of ['index.html', 'v2.html']) {
+    const html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
+    const trialSample = html.match(/id="trialCode"[\s\S]*?placeholder="([^"]+)"/)?.[1];
+    assert.ok(trialSample, `${file} must show a trial code placeholder`);
+    const bare = trialSample.replace(/^例：/, '');
+    assert.equal(validTrialCode(bare), true, `${file} placeholder ${bare} must be redeemable in shape`);
+  }
+});
