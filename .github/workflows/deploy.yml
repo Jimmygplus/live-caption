@@ -1,5 +1,9 @@
-# Publishes public/ to GitHub Pages. No build step — the app is plain files.
-name: Deploy static site
+# One workflow for the whole deploy, because the pieces must land in order:
+# the frontend only talks to Workers it matches, so Workers go first and Pages
+# waits on them. Tests gate both. Deploying from here also keeps the release
+# path off any one laptop.
+name: Deploy
+
 on:
   push:
     branches: [main]
@@ -10,12 +14,52 @@ permissions:
   pages: write
   id-token: write
 
+# Never cancel a run in flight: a half-applied deploy would leave the Workers
+# and the static site on different versions, which is the exact skew this
+# workflow exists to prevent. Queue instead.
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  # The project has no dependencies and no lockfile, so pin the one tool it
+  # shells out to rather than letting npx resolve a new major on its own.
+  WRANGLER_VERSION: "4.128.0"
 
 jobs:
-  deploy:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No install step: the suite runs on node:test and built-ins only.
+      - run: npm test
+
+  workers:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Values set with `wrangler secret put` are stored apart from the script
+      # and survive a deploy, so CI never has to hold SONIOX_API_KEY or
+      # TRIAL_CODE_HMAC_KEY. Keep it that way.
+      - name: Deploy caption relay
+        run: npx wrangler@${{ env.WRANGLER_VERSION }} deploy --config relay/wrangler.jsonc
+
+      - name: Deploy trial broker
+        run: npx wrangler@${{ env.WRANGLER_VERSION }} deploy --config trial/wrangler.jsonc
+
+  pages:
+    needs: workers
     runs-on: ubuntu-latest
     environment:
       name: github-pages
