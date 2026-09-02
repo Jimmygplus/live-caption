@@ -270,13 +270,20 @@
     <div id="audienceLoading" class="audience-loading">正在创建安全会话……</div>
     <div id="audienceSession" hidden>
       <img id="audienceQr" class="audience-qr" alt="手机字幕直播间二维码" />
-      <label for="audienceUrl">手机访问链接</label>
+      <label id="audienceUrlLabel" for="audienceUrl">无法扫码？打开短地址</label>
       <div class="audience-link">
         <input id="audienceUrl" type="url" readonly />
         <button id="audienceCopy" type="button" class="ghost">复制</button>
       </div>
+      <p class="audience-room-code">房间码 <strong id="audienceRoomCode" class="mono"></strong></p>
+      <p id="audienceShortHint" class="hint">参与者也可以先打开短地址首页，再输入房间码。屏幕会显示相同验证码，核对后由主持人批准加入。</p>
       <p id="audienceHint" class="hint"></p>
       <p id="audiencePrivacy" class="audience-private"></p>
+      <section id="audienceJoinRequests" class="audience-join-requests" hidden aria-labelledby="audienceJoinRequestsTitle">
+        <h3 id="audienceJoinRequestsTitle">短码加入请求</h3>
+        <p class="hint">请先与参与者核对六位验证码，再批准。加入密钥只在双方浏览器内加密传递。</p>
+        <ul id="audienceJoinRequestList"></ul>
+      </section>
     </div>
 
     <div class="terms-actions">

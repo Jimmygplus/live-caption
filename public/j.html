@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>短码加入字幕直播间</title>
+  <link rel="stylesheet" href="./join.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <span class="mark" aria-hidden="true">◉</span>
+      <div>
+        <h1>加入字幕直播间</h1>
+        <p>无法扫码时，输入主持人屏幕上的房间码。</p>
+      </div>
+    </header>
+
+    <section class="join-card" aria-labelledby="joinTitle">
+      <p class="eyebrow">安全短码加入</p>
+      <h2 id="joinTitle">输入房间码</h2>
+      <form id="joinForm">
+        <label for="roomCode">房间码</label>
+        <input id="roomCode" name="room" maxlength="11" autocomplete="off" autocapitalize="characters"
+          spellcheck="false" placeholder="ABCDE-FGHIJ" aria-describedby="roomHint" />
+        <p id="roomHint" class="hint">共 10 位，不区分连字符。房间码不包含字幕密钥。</p>
+        <button id="joinBtn" type="submit">申请加入</button>
+      </form>
+
+      <section id="joinProgress" class="join-progress" hidden aria-live="polite">
+        <p class="eyebrow">与主持人核对</p>
+        <strong id="verificationCode" class="verification-code">000-000</strong>
+        <p id="joinStatus">正在发送安全加入请求……</p>
+        <p class="hint">请把这六位验证码读给主持人。只有双方屏幕一致时，主持人才会批准。</p>
+        <button id="cancelBtn" class="secondary" type="button">取消申请</button>
+      </section>
+
+      <p id="joinError" class="error" role="alert"></p>
+    </section>
+
+    <p class="privacy">批准后，加入密钥通过临时 ECDH 密钥加密传递；短地址和中继都拿不到字幕解密密钥。</p>
+  </main>
+  <script type="module" src="./join.js"></script>
+</body>
+</html>

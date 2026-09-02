@@ -3,19 +3,18 @@ const MAX_MESSAGES = 200;
 const MAX_CAPTIONS = 100;
 const MAX_CIPHERTEXT = 6_000;
 const HOST_AWAY_MS = 30_000;
+const JOIN_REQUEST_TTL_MS = 60_000;
+const MAX_PENDING_JOIN_REQUESTS = 12;
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ALLOWED_ORIGINS = new Set([
   'https://jimmygplus.github.io',
   'http://localhost:5175',
   'http://127.0.0.1:5175',
 ]);
 
-function randomToken(bytes) {
-  const value = new Uint8Array(bytes);
-  crypto.getRandomValues(value);
-  return btoa(String.fromCharCode(...value))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '');
+function randomRoomCode(length = 10) {
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return [...values].map((value) => ROOM_CODE_ALPHABET[value % ROOM_CODE_ALPHABET.length]).join('');
 }
 
 function allowedOrigin(request) {
@@ -66,7 +65,7 @@ export default {
       if (!/^[0-9a-f]{64}$/.test(body.hostHash) || !/^[0-9a-f]{64}$/.test(body.joinHash)) {
         return json(request, { error: 'Invalid room credentials.' }, 400);
       }
-      const id = randomToken(9);
+      const id = randomRoomCode();
       const expiresAt = Date.now() + ROOM_TTL_MS;
       const roomId = env.AUDIENCE_ROOMS.idFromName(id);
       const room = env.AUDIENCE_ROOMS.get(roomId);
@@ -188,6 +187,9 @@ export class AudienceRoom {
 
     let attachment = socket.deserializeAttachment() || { authenticated: false };
     if (!attachment.authenticated) {
+      if (message.type === 'join-request') {
+        return this.acceptJoinRequest(socket, attachment, message, meta);
+      }
       if (message.type !== 'auth' || !['host', 'participant'].includes(message.role)) {
         return socket.close(1008, 'Authentication required');
       }
@@ -232,9 +234,96 @@ export class AudienceRoom {
     if (attachment.role === 'host' && message.type === 'heartbeat') {
       return this.markHostOnline(meta, this.currentHostStatus(meta) !== 'online');
     }
+    if (attachment.role === 'host' && message.type === 'join-response') {
+      return this.completeJoinRequest(message, meta);
+    }
     if (attachment.role === 'host' && message.type === 'close-room') {
       return this.closeRoom(meta);
     }
+  }
+
+  async acceptJoinRequest(socket, attachment, message, meta) {
+    if (attachment.role === 'join-request') return socket.close(1008, 'Join request already sent');
+    const requestId = String(message.requestId || '');
+    const publicKey = String(message.publicKey || '');
+    if (!/^[A-Za-z0-9_-]{16,80}$/.test(requestId) || !/^[A-Za-z0-9_-]{80,100}$/.test(publicKey)) {
+      socket.send(JSON.stringify({ type: 'join-rejected', reason: 'invalid' }));
+      return socket.close(1008, 'Invalid join request');
+    }
+    if (!this.hasAuthenticatedHost()) {
+      socket.send(JSON.stringify({ type: 'join-unavailable', reason: 'host-away' }));
+      return socket.close(1000, 'Host unavailable');
+    }
+    const now = Date.now();
+    meta.joinRequestTimes = (meta.joinRequestTimes || []).filter((at) => now - at < 10_000);
+    if (meta.joinRequestTimes.length >= 20) {
+      socket.send(JSON.stringify({ type: 'join-unavailable', reason: 'rate-limited' }));
+      return socket.close(1013, 'Join request rate limited');
+    }
+    const pendingCount = this.state.getWebSockets().filter((peerSocket) => {
+      const peer = peerSocket.deserializeAttachment();
+      return !peer?.authenticated && peer?.role === 'join-request';
+    }).length;
+    if (pendingCount >= MAX_PENDING_JOIN_REQUESTS) {
+      socket.send(JSON.stringify({ type: 'join-unavailable', reason: 'busy' }));
+      return socket.close(1013, 'Too many join requests');
+    }
+    socket.serializeAttachment({
+      authenticated: false,
+      role: 'join-request',
+      requestId,
+      requestedAt: now,
+    });
+    meta.joinRequestTimes.push(now);
+    await this.state.storage.put('meta', meta);
+    socket.send(JSON.stringify({ type: 'join-pending', requestId, expiresAt: meta.expiresAt }));
+    this.broadcastToHosts({ type: 'join-request', requestId, publicKey });
+    const expiryTimer = setTimeout(() => {
+      const pending = socket.deserializeAttachment();
+      if (pending?.role !== 'join-request' || pending.requestId !== requestId) return;
+      socket.serializeAttachment({ authenticated: false, role: 'join-complete' });
+      socket.send(JSON.stringify({ type: 'join-expired', requestId }));
+      socket.close(1000, 'Join request expired');
+    }, JOIN_REQUEST_TTL_MS);
+    expiryTimer?.unref?.();
+  }
+
+  completeJoinRequest(message, meta) {
+    const requestId = String(message.requestId || '');
+    const target = this.state.getWebSockets().find((peerSocket) => {
+      const peer = peerSocket.deserializeAttachment();
+      return !peer?.authenticated && peer?.role === 'join-request' && peer.requestId === requestId;
+    });
+    if (!target) return;
+    const pending = target.deserializeAttachment();
+    if (Date.now() - Number(pending.requestedAt) > JOIN_REQUEST_TTL_MS) {
+      target.serializeAttachment({ authenticated: false, role: 'join-complete' });
+      target.send(JSON.stringify({ type: 'join-expired', requestId }));
+      this.broadcastToHosts({ type: 'join-complete', requestId, approved: false });
+      return target.close(1000, 'Join request expired');
+    }
+    if (message.approved !== true) {
+      target.serializeAttachment({ authenticated: false, role: 'join-complete' });
+      target.send(JSON.stringify({ type: 'join-rejected', requestId, reason: 'host-rejected' }));
+      this.broadcastToHosts({ type: 'join-complete', requestId, approved: false });
+      return target.close(1000, 'Join request rejected');
+    }
+    const hostPublicKey = String(message.hostPublicKey || '');
+    const iv = String(message.iv || '');
+    const ciphertext = String(message.ciphertext || '');
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(hostPublicKey) || iv.length > 32 || ciphertext.length > 160) {
+      return;
+    }
+    target.serializeAttachment({ authenticated: false, role: 'join-complete' });
+    target.send(JSON.stringify({
+      type: 'join-approved',
+      requestId,
+      hostPublicKey,
+      iv,
+      ciphertext,
+      expiresAt: meta.expiresAt,
+    }));
+    this.broadcastToHosts({ type: 'join-complete', requestId, approved: true });
   }
 
   async acceptMessage(socket, attachment, message, meta) {
@@ -447,6 +536,10 @@ export class AudienceRoom {
 
   async webSocketClose(socket) {
     const peer = socket.deserializeAttachment();
+    if (!peer?.authenticated && peer?.role === 'join-request') {
+      this.broadcastToHosts({ type: 'join-cancel', requestId: peer.requestId });
+      return;
+    }
     if (!peer?.authenticated || peer.role !== 'host' || this.hasAuthenticatedHost(socket)) return;
     const meta = await this.state.storage.get('meta');
     if (meta && !meta.closed && meta.expiresAt > Date.now()) await this.markHostAway(meta);

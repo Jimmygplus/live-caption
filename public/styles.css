@@ -838,6 +838,43 @@ body[data-view="ticker"] .segment {
 .audience-link { display: flex; gap: 8px; margin-top: 5px; }
 .audience-link input { flex: 1; min-width: 0; }
 .audience-link .ghost { align-self: stretch; color: var(--accent); }
+.audience-room-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.audience-room-code strong {
+  color: var(--accent);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+}
+.audience-join-requests {
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid #fbbf24;
+  border-radius: 10px;
+}
+.audience-join-requests h3 { margin: 0 0 4px; font-size: 14px; }
+.audience-join-requests ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.audience-join-requests li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.audience-join-requests li > div:first-child { display: grid; gap: 3px; }
+.audience-join-requests li span { color: var(--dim); font-size: 11px; }
+.audience-join-requests li > div:last-child { display: flex; gap: 6px; }
+.audience-join-requests button { padding: 7px 10px; font-size: 12px; }
 .audience-dialog .hint.warn { color: #fbbf24; margin-top: 8px; }
 .audience-private {
   margin: 12px 0 0;
@@ -1060,3 +1097,5 @@ body.phone .terms, .phone-dialog {
 body.phone .audio-check-reports { grid-template-columns: 1fr; }
 body.phone .audio-check-recommendation { flex-wrap: wrap; }
 body.phone .audio-check-recommendation button { width: 100%; margin-left: 0; }
+body.phone .audience-join-requests li { align-items: stretch; flex-direction: column; }
+body.phone .audience-join-requests li > div:last-child { display: grid; grid-template-columns: 1fr 2fr; }

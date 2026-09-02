@@ -37,6 +37,7 @@ import {
   randomAudienceSecret,
 } from './audience-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
+import { formatRoomCode, joinVerificationCode, wrapJoinSecret } from './join-crypto.js';
 
 const SONIOX_WS = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = 'stt-rt-v5';
@@ -176,10 +177,15 @@ const el = {
   audienceLoading: $('audienceLoading'),
   audienceSession: $('audienceSession'),
   audienceQr: $('audienceQr'),
+  audienceUrlLabel: $('audienceUrlLabel'),
   audienceUrl: $('audienceUrl'),
   audienceCopy: $('audienceCopy'),
+  audienceRoomCode: $('audienceRoomCode'),
+  audienceShortHint: $('audienceShortHint'),
   audienceHint: $('audienceHint'),
   audiencePrivacy: $('audiencePrivacy'),
+  audienceJoinRequests: $('audienceJoinRequests'),
+  audienceJoinRequestList: $('audienceJoinRequestList'),
   audienceEnd: $('audienceEnd'),
   captionEditDialog: $('captionEditDialog'),
   captionEditForm: $('captionEditForm'),
@@ -524,6 +530,7 @@ function makeRelayAudienceSession(data) {
     lastDraftOrig: '',
     lastDraftTrans: '',
     seen: new Set(Array.isArray(data.seen) ? data.seen : []),
+    joinRequests: new Map(),
     socket: null,
     ready: false,
     closed: false,
@@ -595,18 +602,123 @@ function localOnlyUrl(url) {
   }
 }
 
+function audienceShortJoinUrl(session) {
+  const page = new URL('./j.html', location.href);
+  page.searchParams.set('r', session.id);
+  return page.href;
+}
+
+function removeAudienceJoinRequest(session, requestId) {
+  const request = session.joinRequests.get(requestId);
+  if (!request) return;
+  clearTimeout(request.timer);
+  session.joinRequests.delete(requestId);
+  renderAudienceJoinRequests(session);
+}
+
+function renderAudienceJoinRequests(session) {
+  el.audienceJoinRequestList.replaceChildren();
+  const requests = [...session.joinRequests.values()];
+  el.audienceJoinRequests.hidden = requests.length === 0;
+  for (const request of requests) {
+    const item = document.createElement('li');
+    const copy = document.createElement('div');
+    const title = document.createElement('strong');
+    const detail = document.createElement('span');
+    title.textContent = `验证码 ${request.code}`;
+    detail.textContent = '请让参与者读出屏幕上的验证码';
+    copy.append(title, detail);
+    const actions = document.createElement('div');
+    const reject = document.createElement('button');
+    reject.type = 'button';
+    reject.className = 'ghost';
+    reject.dataset.joinRequest = request.id;
+    reject.dataset.joinDecision = 'reject';
+    reject.textContent = '拒绝';
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.className = 'primary';
+    approve.dataset.joinRequest = request.id;
+    approve.dataset.joinDecision = 'approve';
+    approve.textContent = '验证码一致，批准';
+    actions.append(reject, approve);
+    item.append(copy, actions);
+    el.audienceJoinRequestList.append(item);
+  }
+}
+
+async function receiveAudienceJoinRequest(session, message) {
+  const requestId = String(message.requestId || '');
+  const publicKey = String(message.publicKey || '');
+  if (
+    app.audience !== session
+    || session.closed
+    || session.joinRequests.has(requestId)
+    || !/^[A-Za-z0-9_-]{16,80}$/.test(requestId)
+    || !/^[A-Za-z0-9_-]{80,100}$/.test(publicKey)
+  ) return;
+  const request = {
+    id: requestId,
+    publicKey,
+    code: await joinVerificationCode(publicKey),
+    timer: null,
+  };
+  request.timer = setTimeout(() => removeAudienceJoinRequest(session, requestId), 60_000);
+  session.joinRequests.set(requestId, request);
+  renderAudienceJoinRequests(session);
+  showNotice(
+    `有人使用房间码申请加入，验证码 ${request.code}。请与对方核对。`,
+    '核对并确认',
+    () => {
+      if (!el.audienceDialog.open) el.audienceDialog.showModal();
+      showAudienceSession(session);
+      el.audienceJoinRequests.scrollIntoView({ block: 'nearest' });
+    },
+  );
+}
+
+async function respondToAudienceJoinRequest(session, requestId, approved) {
+  const request = session.joinRequests.get(requestId);
+  if (!request || session.socket?.readyState !== WebSocket.OPEN) return;
+  try {
+    if (!approved) {
+      session.socket.send(JSON.stringify({ type: 'join-response', requestId, approved: false }));
+      removeAudienceJoinRequest(session, requestId);
+      el.audienceHint.textContent = `已拒绝验证码 ${request.code} 的加入请求。`;
+      return;
+    }
+    const wrapped = await wrapJoinSecret(request.publicKey, session.joinSecret, requestId);
+    session.socket.send(JSON.stringify({
+      type: 'join-response',
+      requestId,
+      approved: true,
+      ...wrapped,
+    }));
+    removeAudienceJoinRequest(session, requestId);
+    el.audienceHint.textContent = `已批准验证码 ${request.code}；参与者正在进入字幕直播间。`;
+    el.audienceHint.classList.remove('warn');
+  } catch {
+    setError('无法安全批准短码加入请求，请让参与者重新申请。');
+  }
+}
+
 function showAudienceSession(session) {
   const joinUrl = audienceJoinUrl(session);
   session.joinUrl = joinUrl;
   el.audienceLoading.hidden = true;
   el.audienceSession.hidden = false;
   el.audienceEnd.hidden = false;
-  el.audienceUrl.value = joinUrl;
+  const shortJoinSupported = session.transport === 'relay' && /^[A-HJ-NP-Z2-9]{10}$/.test(session.id);
+  el.audienceUrl.value = shortJoinSupported ? audienceShortJoinUrl(session) : joinUrl;
+  el.audienceUrlLabel.textContent = shortJoinSupported ? '无法扫码？打开短地址' : '手机访问链接';
+  el.audienceRoomCode.textContent = shortJoinSupported ? formatRoomCode(session.id) : '';
+  el.audienceRoomCode.parentElement.hidden = !shortJoinSupported;
+  el.audienceShortHint.hidden = !shortJoinSupported;
   try {
     el.audienceQr.src = qrDataUrl(joinUrl);
     el.audienceQr.hidden = false;
     el.audienceHint.textContent = session.transport === 'relay'
-      ? '端到端加密字幕通道已连接；让参与者扫码，同一个二维码可供多人查看和发言。'
+      ? '二维码可直接加入；短地址需要主持人核对验证码并批准，同一个直播间可供多人使用。'
       : localOnlyUrl(joinUrl)
       ? '当前链接是 localhost，手机无法访问。请用局域网 IP 打开主持端，或在服务端设置 PUBLIC_URL 后重新创建。'
       : '让参与者用手机相机扫码；同一个二维码可供多人使用。';
@@ -615,13 +727,14 @@ function showAudienceSession(session) {
       session.transport !== 'relay' && localOnlyUrl(joinUrl),
     );
     el.audiencePrivacy.textContent = session.transport === 'relay'
-      ? '字幕与发言均为端到端加密；中继只暂存最近 100 条最终字幕的密文，会话 6 小时自动失效。'
+      ? '字幕与发言均为端到端加密；短地址不含加入密钥，批准时密钥经临时 ECDH 加密传递。会话 6 小时自动失效。'
       : '会话只保存在当前服务进程内，6 小时自动失效；结束后二维码立即作废。';
   } catch (error) {
     el.audienceQr.hidden = true;
     el.audienceHint.textContent = error.message;
     el.audienceHint.classList.add('warn');
   }
+  renderAudienceJoinRequests(session);
   el.audienceBtn.classList.add('active');
 }
 
@@ -836,6 +949,10 @@ function connectRelayHost(session, initial = false) {
             setError('收到一条无法解密的文字消息，已忽略。');
           }
         });
+      } else if (message.type === 'join-request') {
+        void receiveAudienceJoinRequest(session, message);
+      } else if (message.type === 'join-cancel' || message.type === 'join-complete') {
+        removeAudienceJoinRequest(session, String(message.requestId || ''));
       } else if (message.type === 'closed') {
         session.closed = true;
         clearInterval(session.heartbeatTimer);
@@ -973,6 +1090,8 @@ async function endAudienceSession() {
   clearTimeout(session.reconnectTimer);
   clearTimeout(session.draftTimer);
   clearInterval(session.heartbeatTimer);
+  for (const request of session.joinRequests?.values?.() || []) clearTimeout(request.timer);
+  session.joinRequests?.clear?.();
   clearAudienceHostSession();
   app.audience = null;
   el.audienceBtn.classList.remove('active');
@@ -3054,6 +3173,13 @@ el.audienceCopy.addEventListener('click', async () => {
     el.audienceUrl.select();
     setError('无法自动复制，请长按链接复制。');
   }
+});
+
+el.audienceJoinRequestList.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-join-request]');
+  if (!button || !app.audience) return;
+  const approved = button.dataset.joinDecision === 'approve';
+  void respondToAudienceJoinRequest(app.audience, button.dataset.joinRequest, approved);
 });
 
 el.audienceEnd.addEventListener('click', () => {

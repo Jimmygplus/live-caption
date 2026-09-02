@@ -19,6 +19,14 @@ import {
   randomAudienceSecret,
 } from '../public/audience-crypto.js';
 import { AudienceRoom } from '../relay/src/index.js';
+import {
+  createJoinKeyPair,
+  formatRoomCode,
+  joinVerificationCode,
+  normalizeRoomCode,
+  unwrapJoinSecret,
+  wrapJoinSecret,
+} from '../public/join-crypto.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -221,6 +229,112 @@ test('audience relay payloads are encrypted, authenticated and language-aware', 
 
   const joinUrl = `https://jimmygplus.github.io/live-caption/input.html#r=ABCDEFGHIJKL&s=${secret}`;
   assert.match(qrSvg(joinUrl), /^<svg/);
+});
+
+test('short-code join wraps room access for two approved clients and handles unsafe requests', async () => {
+  const hostSecret = randomAudienceSecret();
+  const joinSecret = randomAudienceSecret();
+  const sockets = [];
+  const state = {
+    storage: new MemoryStorage(),
+    getWebSockets: () => sockets.filter((socket) => !socket.closed),
+  };
+  const room = new AudienceRoom(state);
+  await room.fetch(new Request('https://audience-room/internal/init', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: 'ABCDE23456',
+      hostHash: await hashAudienceToken(hostSecret),
+      joinHash: await hashAudienceToken(joinSecret),
+      expiresAt: Date.now() + 60_000,
+    }),
+  }));
+
+  const offlinePair = await createJoinKeyPair();
+  const offline = new TestSocket();
+  sockets.push(offline);
+  await room.webSocketMessage(offline, JSON.stringify({
+    type: 'join-request', requestId: 'request-offline-0001', publicKey: offlinePair.publicKey,
+  }));
+  assert.equal(offline.messages[0].type, 'join-unavailable');
+  assert.equal(offline.messages[0].reason, 'host-away');
+
+  const host = new TestSocket();
+  sockets.push(host);
+  await room.webSocketMessage(host, JSON.stringify({
+    type: 'auth', role: 'host', tokenHash: await hashAudienceToken(hostSecret),
+  }));
+
+  const malformed = new TestSocket();
+  sockets.push(malformed);
+  await room.webSocketMessage(malformed, JSON.stringify({
+    type: 'join-request', requestId: 'too-short', publicKey: 'not-a-key',
+  }));
+  assert.equal(malformed.messages[0].type, 'join-rejected');
+  assert.equal(malformed.messages[0].reason, 'invalid');
+
+  const clients = [];
+  for (let index = 0; index < 2; index += 1) {
+    const pair = await createJoinKeyPair();
+    const socket = new TestSocket();
+    const requestId = `short-join-request-000${index}`;
+    sockets.push(socket);
+    await room.webSocketMessage(socket, JSON.stringify({
+      type: 'join-request', requestId, publicKey: pair.publicKey,
+    }));
+    assert.equal(socket.messages[0].type, 'join-pending');
+    const hostRequest = host.messages.find((message) => message.requestId === requestId);
+    assert.equal(hostRequest.type, 'join-request');
+    assert.match(await joinVerificationCode(pair.publicKey), /^\d{3}-\d{3}$/);
+
+    const wrapped = await wrapJoinSecret(pair.publicKey, joinSecret, requestId);
+    await room.webSocketMessage(host, JSON.stringify({
+      type: 'join-response', requestId, approved: true, ...wrapped,
+    }));
+    const approved = socket.messages.at(-1);
+    assert.equal(approved.type, 'join-approved');
+    assert.equal(await unwrapJoinSecret(pair.privateKey, approved, requestId), joinSecret);
+    clients.push(socket);
+  }
+
+  const rejectedPair = await createJoinKeyPair();
+  const rejected = new TestSocket();
+  sockets.push(rejected);
+  await room.webSocketMessage(rejected, JSON.stringify({
+    type: 'join-request', requestId: 'short-join-rejected-01', publicKey: rejectedPair.publicKey,
+  }));
+  await room.webSocketMessage(host, JSON.stringify({
+    type: 'join-response', requestId: 'short-join-rejected-01', approved: false,
+  }));
+  assert.equal(rejected.messages.at(-1).type, 'join-rejected');
+  assert.equal(rejected.messages.at(-1).reason, 'host-rejected');
+
+  // The three completed requests above plus seventeen quick rejections fill
+  // the room-level ten-second budget without leaving pending sockets behind.
+  for (let index = 0; index < 17; index += 1) {
+    const limited = new TestSocket();
+    const limitedId = `rate-limit-request-${String(index).padStart(3, '0')}`;
+    sockets.push(limited);
+    await room.webSocketMessage(limited, JSON.stringify({
+      type: 'join-request', requestId: limitedId, publicKey: rejectedPair.publicKey,
+    }));
+    assert.equal(limited.messages[0].type, 'join-pending');
+    await room.webSocketMessage(host, JSON.stringify({
+      type: 'join-response', requestId: limitedId, approved: false,
+    }));
+  }
+  const rateLimited = new TestSocket();
+  sockets.push(rateLimited);
+  await room.webSocketMessage(rateLimited, JSON.stringify({
+    type: 'join-request', requestId: 'rate-limit-overflow-0001', publicKey: rejectedPair.publicKey,
+  }));
+  assert.equal(rateLimited.messages[0].type, 'join-unavailable');
+  assert.equal(rateLimited.messages[0].reason, 'rate-limited');
+
+  assert.equal(clients.length, 2);
+  assert.ok(!JSON.stringify([...state.storage.values.values()]).includes(joinSecret));
+  assert.equal(normalizeRoomCode('abcde-23456'), 'ABCDE23456');
+  assert.equal(formatRoomCode('abcde23456'), 'ABCDE-23456');
 });
 
 test('relay room authenticates peers, syncs encrypted captions and acknowledges display', async () => {
@@ -457,11 +571,13 @@ test('relay expiry announces a permanent close before deleting room storage', as
 });
 
 test('participant page keeps speaking first and full captions available on demand', async () => {
-  const [html, css, inputScript, hostScript] = await Promise.all([
+  const [html, css, inputScript, hostScript, joinHtml, joinScript] = await Promise.all([
     readFile(new URL('../public/input.html', import.meta.url), 'utf8'),
     readFile(new URL('../public/input.css', import.meta.url), 'utf8'),
     readFile(new URL('../public/input.js', import.meta.url), 'utf8'),
     readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../public/j.html', import.meta.url), 'utf8'),
+    readFile(new URL('../public/join.js', import.meta.url), 'utf8'),
   ]);
   assert.ok(html.indexOf('id="messageForm"') < html.indexOf('id="captionPanel"'));
   assert.match(html, /id="hostPresence"/);
@@ -472,6 +588,11 @@ test('participant page keeps speaking first and full captions available on deman
   assert.match(inputScript, /已排队，等待主持人恢复/);
   assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
   assert.doesNotMatch(hostScript, /localStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
+  assert.match(joinHtml, /安全短码加入/);
+  assert.match(joinHtml, /id="roomCode"/);
+  assert.match(joinScript, /createJoinKeyPair/);
+  assert.match(joinScript, /sessionStorage\.setItem\('lc\.audience\.room'/);
+  assert.doesNotMatch(joinScript, /localStorage\.setItem\('lc\.audience\.room'/);
 });
 
 test('host controls combine signal threshold, link font sizes and default to short captions', async () => {
