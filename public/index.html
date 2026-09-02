@@ -244,9 +244,9 @@
         每个推荐码兑换一次连续会话。点击“开始”时才会核销；开始后最多使用 30 分钟，
         刷新或断线不会保留剩余时间。
       </p>
-      <label for="trialCode">推荐码<span class="hint-inline">8 位 · 不区分连字符</span></label>
+      <label for="trialCode">推荐码<span class="hint-inline">不区分大小写和连字符</span></label>
       <div class="trial-code-row">
-        <input id="trialCode" type="text" maxlength="12" autocomplete="off" autocapitalize="characters"
+        <input id="trialCode" type="text" maxlength="32" autocomplete="off" autocapitalize="characters"
           spellcheck="false" placeholder="ABCDE-FGHIJ" aria-describedby="trialStatus" />
         <button id="trialApply" type="button" class="primary">使用推荐码</button>
       </div>

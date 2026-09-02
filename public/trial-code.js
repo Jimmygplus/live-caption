@@ -1,17 +1,22 @@
 // Kept in sync with CODE_PATTERN in trial/src/index.js, which verifies the code.
-export const TRIAL_CODE_LENGTH = 8;
+export const TRIAL_CODE_MIN = 6;
+export const TRIAL_CODE_MAX = 32;
 
-// Codes minted before the length was reduced are 10 characters; both redeem.
-const TRIAL_CODE_PATTERN = /^(?:[A-HJ-NP-Z2-9]{8}|[A-HJ-NP-Z2-9]{10})$/;
+// Deliberately wider than the generator's alphabet. Generated codes avoid
+// 0/O/1/I because a human transcribing an arbitrary string cannot tell them
+// apart; a campaign's own word ("LAUNCH2026") carries that context itself, so
+// restricting it would rule out most memorable codes. The minimum length is
+// what keeps a guessable code out of reach of the rate limiter.
+const TRIAL_CODE_PATTERN = new RegExp(`^[A-Z0-9]{${TRIAL_CODE_MIN},${TRIAL_CODE_MAX}}$`);
 
 export function normalizeTrialCode(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+// Deliberately no grouping: a memorable code must not have hyphens injected
+// mid-word as it is typed. Hyphens in a pasted code are stripped above.
 export function formatTrialCode(value) {
-  // Groups of four read well aloud and suit both supported lengths.
-  const normalized = normalizeTrialCode(value).slice(0, 10);
-  return (normalized.match(/.{1,4}/g) || []).join('-');
+  return normalizeTrialCode(value).slice(0, TRIAL_CODE_MAX);
 }
 
 export function validTrialCode(value) {
@@ -20,7 +25,7 @@ export function validTrialCode(value) {
 
 export async function redeemTrialCode({ brokerUrl, code, fetchImpl = fetch }) {
   if (!brokerUrl) throw new Error('推荐码体验服务尚未配置。');
-  if (!validTrialCode(code)) throw new Error(`请输入有效的 ${TRIAL_CODE_LENGTH} 位推荐码。`);
+  if (!validTrialCode(code)) throw new Error('请输入有效的推荐码（至少 6 位字母或数字）。');
   const response = await fetchImpl(`${brokerUrl.replace(/\/$/, '')}/v1/trials/redeem`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

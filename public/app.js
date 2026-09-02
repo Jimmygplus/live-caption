@@ -3181,7 +3181,7 @@ el.trialCode.addEventListener('input', () => {
 
 el.trialApply.addEventListener('click', () => {
   if (!validTrialCode(el.trialCode.value)) {
-    el.trialStatus.textContent = '请输入主持方提供的 8 位推荐码。';
+    el.trialStatus.textContent = '请输入主持方提供的推荐码。';
     el.trialStatus.dataset.state = 'error';
     el.trialCode.focus();
     return;

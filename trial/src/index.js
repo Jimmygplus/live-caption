@@ -4,8 +4,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:5175',
 ];
 const SONIOX_TEMP_KEY_URL = 'https://api.soniox.com/v1/auth/temporary-api-key';
-// Codes minted before the length was reduced are 10 characters; both redeem.
-const CODE_PATTERN = /^(?:[A-HJ-NP-Z2-9]{8}|[A-HJ-NP-Z2-9]{10})$/;
+// Wider than the generator's alphabet: generated codes avoid 0/O/1/I so they
+// survive being transcribed, but a campaign's own word carries that context
+// itself. The minimum length is what bounds guessing, alongside the rate limit.
+const CODE_PATTERN = /^[A-Z0-9]{6,32}$/;
 const MAX_BODY_BYTES = 1_024;
 const RATE_WINDOW_MS = 10 * 60 * 1_000;
 const RATE_ATTEMPTS = 10;
@@ -122,7 +124,7 @@ async function redeem(request, env, fetchImpl, now) {
   try { body = JSON.parse(rawBody); } catch { body = {}; }
   const code = normalizeTrialCode(body.code);
   if (!CODE_PATTERN.test(code)) {
-    return json(request, env, { error: '请输入有效的 8 位推荐码。' }, 400);
+    return json(request, env, { error: '请输入有效的推荐码（至少 6 位字母或数字）。' }, 400);
   }
 
   const codeHash = await hashTrialCode(env.TRIAL_CODE_HMAC_KEY, code);

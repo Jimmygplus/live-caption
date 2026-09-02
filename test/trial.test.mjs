@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { webcrypto } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { createTrialWorker, hashTrialCode } from '../trial/src/index.js';
 import {
@@ -129,12 +132,18 @@ function successfulSoniox(assertRequest = () => {}) {
 
 test('trial code formatting is unambiguous and redemption uses a POST body', async () => {
   assert.equal(normalizeTrialCode('abcd-2345'), VALID_CODE);
-  assert.equal(formatTrialCode('abcd2345'), 'ABCD-2345');
   assert.equal(validTrialCode('ABCD-2345'), true);
-  assert.equal(validTrialCode('ABCDE-10OIL'), false);
-  // Codes handed out before the length was reduced must still redeem.
+  // Hyphens are stripped, never re-inserted, so a chosen word survives typing.
+  assert.equal(formatTrialCode('abcd-2345'), 'ABCD2345');
+  assert.equal(formatTrialCode('launch2026'), 'LAUNCH2026');
+  // A campaign word may use the characters the generator itself avoids.
+  assert.equal(validTrialCode('LAUNCH2026'), true);
+  assert.equal(validTrialCode('JIMMY2026'), true);
+  // Codes issued at an earlier length still redeem.
   assert.equal(validTrialCode('ABCDE-23456'), true);
-  assert.equal(formatTrialCode('abcde23456'), 'ABCD-E234-56');
+  // Too short to outrun the rate limiter; and nothing survives normalisation.
+  assert.equal(validTrialCode('TEST'), false);
+  assert.equal(validTrialCode('中文推荐码'), false);
 
   let captured;
   const result = await redeemTrialCode({
@@ -247,4 +256,48 @@ test('trial UI explains the single-session boundary and keeps code out of URLs',
   assert.match(app, /点击“开始”时才会正式核销/);
   assert.match(worker, /max_session_duration_seconds: TRIAL_SECONDS/);
   assert.doesNotMatch(worker, /console\.(log|error).*code/i);
+});
+
+test('generated import SQL hashes custom codes exactly as the broker does', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'trial-codes-'));
+  const sqlPath = join(dir, 'import.sql');
+  const codesPath = join(dir, 'codes.txt');
+  // Lower case and hyphenated on purpose: the generator and the broker must
+  // normalise identically, or a custom code could never be redeemed at all.
+  const custom = 'launch-2026';
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      'trial/scripts/generate-codes.mjs',
+      '--code', custom,
+      '--count', '2',
+      '--campaign', 'test-campaign',
+      '--expires', '2099-01-01T00:00:00Z',
+      '--sql', sqlPath,
+      '--codes', codesPath,
+    ], {
+      cwd: new URL('..', import.meta.url),
+      env: { ...process.env, TRIAL_CODE_HMAC_KEY: HMAC_KEY },
+      stdio: 'ignore',
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`generator exited ${code}`))));
+  });
+
+  const sql = await readFile(sqlPath, 'utf8');
+  const codes = (await readFile(codesPath, 'utf8')).trim().split('\n');
+
+  assert.equal(codes.length, 3, 'one custom code plus two random ones');
+  assert.equal(codes[0], custom, 'a custom code is written back verbatim');
+
+  // The broker looks a code up by this hash, so the SQL must carry the same one.
+  assert.ok(sql.includes(await hashTrialCode(HMAC_KEY, 'LAUNCH2026')));
+  assert.ok(sql.includes(await hashTrialCode(HMAC_KEY, custom)), 'case and hyphens must not matter');
+
+  // Random codes stay inside the unambiguous alphabet even though custom ones need not.
+  for (const code of codes.slice(1)) {
+    assert.match(code.replaceAll('-', ''), /^[A-HJ-NP-Z2-9]{8}$/);
+  }
+
+  await rm(dir, { recursive: true, force: true });
 });

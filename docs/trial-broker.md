@@ -8,7 +8,20 @@ Soniox 长期 Key。
 
 ## 权益规则
 
-- 推荐码默认只可兑换一次，也可以在 D1 中显式设置 `max_redemptions`。
+- 推荐码默认只可兑换一次，也可以用 `--uses` 或在 D1 中显式设置 `max_redemptions`。
+- 推荐码为 6-32 位字母或数字，大小写和连字符都会被忽略。随机生成的码不含
+  `0/O/1/I`（避免转抄出错）；自定义活动码不受此限制，因为词本身提供了上下文。
+- 用 `--code` 指定自定义码，可与 `--count` 随机码同时使用：
+
+  ```
+  node trial/scripts/generate-codes.mjs \
+    --code 'LAUNCH2026,DOUBLE11' --count 20 --uses 50 \
+    --campaign shuang11 --expires '2026-12-31T00:00:00Z' \
+    --sql ~/.config/live-caption/import.sql \
+    --codes ~/.config/live-caption/codes.txt
+  ```
+
+  明文码只写进 `--codes` 指定的文件（权限 600，放仓库外）；D1 只收哈希。
 - 临时 Key 的启用窗口是 60 秒，`single_use` 为 `true`。
 - 每条 Soniox WebSocket 最长运行 1800 秒，由 Soniox 服务端强制关闭。
 - 停止、刷新或断线后不恢复剩余分钟。
