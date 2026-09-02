@@ -170,7 +170,9 @@ body[data-state="error"] .dot { background: var(--danger); }
   cursor: pointer;
 }
 
-.chip-btn:hover { color: var(--text); background: var(--raise); }
+@media (hover: hover) {
+  .chip-btn:hover { color: var(--text); background: var(--raise); }
+}
 .chip-btn.active { color: var(--accent); border-color: var(--accent-dim); }
 .chip-btn[hidden] { display: none; }
 
@@ -288,9 +290,11 @@ body.show-timestamps .segment .timestamp + .identity:not(:empty)::before { conte
   transition: opacity 120ms ease;
 }
 
-.segment:hover .segment-edit,
 .segment:focus-within .segment-edit,
 .segment[data-state="corrected"] .segment-edit { opacity: 1; }
+@media (hover: hover) {
+  .segment:hover .segment-edit { opacity: 1; }
+}
 .segment[data-state="corrected"] .segment-edit::before { content: "✓ "; }
 
 .placeholder { color: var(--muted); max-width: 44ch; }
@@ -400,7 +404,9 @@ select, input[type="text"], input[type="password"], input[type="url"], textarea 
   text-overflow: ellipsis;
   transition: background .15s, box-shadow .15s;
 }
-select:hover, input:hover, textarea:hover { background: color-mix(in srgb, var(--raise) 84%, var(--text)); }
+@media (hover: hover) {
+  select:hover, input:hover, textarea:hover { background: color-mix(in srgb, var(--raise) 84%, var(--text)); }
+}
 
 /* Room for the native disclosure arrow: without it a long option name runs
    straight under the glyph. */
@@ -425,7 +431,9 @@ button { font: inherit; cursor: pointer; }
   box-shadow: var(--sh-sm);
   transition: background .15s, color .15s;
 }
-.ghost:hover { color: var(--text); background: color-mix(in srgb, var(--raise) 84%, var(--text)); }
+@media (hover: hover) {
+  .ghost:hover { color: var(--text); background: color-mix(in srgb, var(--raise) 84%, var(--text)); }
+}
 .ghost.active,
 .ghost[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-dim); }
 .ghost.danger { color: var(--danger); }
@@ -456,7 +464,9 @@ button { font: inherit; cursor: pointer; }
   box-shadow: var(--sh-md);
   transition: filter .15s;
 }
-.primary:hover { filter: brightness(1.06); }
+@media (hover: hover) {
+  .primary:hover { filter: brightness(1.06); }
+}
 .primary[data-running="true"] {
   color: #fff;
   background: var(--danger);
@@ -566,6 +576,18 @@ button { font: inherit; cursor: pointer; }
 .field.compact input[type="range"] { width: 84px; }
 
 .console-action { display: flex; align-items: center; }
+
+.sheet-close {
+  display: none;
+  align-self: flex-end;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+}
 .start { align-self: end; }
 
 /* Idle shows the ordered form; a running session collapses it and brings the
@@ -625,7 +647,9 @@ body[data-state="connecting"] .live-tools { display: flex; }
   border: 0;
   border-radius: 9px;
 }
-.menu-items button:hover { background: var(--raise); }
+@media (hover: hover) {
+  .menu-items button:hover { background: var(--raise); }
+}
 .menu-items button.danger { color: var(--danger); }
 
 /* ── Status bar ──────────────────────────────────────────────────────────── */
@@ -848,7 +872,10 @@ body.theater.peek .topbar {
   opacity: .28;
   transition: opacity .15s;
 }
-#theaterExit:hover, #theaterExit:focus-visible { opacity: 1; }
+#theaterExit:focus-visible { opacity: 1; }
+@media (hover: hover) {
+  #theaterExit:hover { opacity: 1; }
+}
 #theaterExit[hidden] { display: none; }
 
 /* The PiP document carries only the caption stage, so the page grid would
@@ -925,6 +952,7 @@ body.phone .tool-cluster { flex-wrap: wrap; }
 body.phone .tool-cluster .ghost { flex: 1 1 auto; }
 body.phone .field.compact input[type="range"] { flex: 1; width: auto; }
 body.phone .console-action { display: none; }
+body.phone .sheet-close { display: block; }
 body.phone .brand { display: none; }
 body.phone main#stage { padding: 14px 16px 24vh; }
 body.phone[data-state="idle"] main#stage { padding-bottom: 18px; }
@@ -988,4 +1016,44 @@ summary:focus-visible {
      pulses are exactly what this preference is asking us to stop. */
   .dot, .segment.live .original::after { animation: none; }
   body.phone .console { transition: none; }
+}
+
+/* ── Touch ───────────────────────────────────────────────────────────────── */
+
+/* Keyed on the pointer, not the viewport: a small window on a laptop still has
+   a mouse, and a tablet in landscape is wide but still finger-driven. Every
+   control that a finger can reach clears 44px here — measured, not assumed. */
+@media (pointer: coarse) {
+  .chip-btn,
+  .ghost,
+  .primary,
+  .menu-items button,
+  .sheet-close {
+    min-height: 44px;
+  }
+
+  .chip-btn { min-width: 44px; justify-content: center; }
+  .icon-only, .swap { min-width: 44px; }
+
+  select, input[type="text"], input[type="password"], input[type="url"] {
+    min-height: 44px;
+  }
+
+  .advanced summary { min-height: 44px; display: flex; align-items: center; }
+  .menu summary { min-height: 44px; }
+
+  .notice { gap: 4px; }
+  .notice-action { min-height: 44px; padding-inline: 10px; }
+  .notice-dismiss { min-width: 44px; min-height: 44px; }
+
+  /* The meter stays a thin line; only the area a thumb can land on grows. */
+  .signal-track { height: 44px; }
+  .signal-track .meter { inset-block-start: 20px; }
+  .signal-track input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: 12px; }
+  .signal-track input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; }
+
+  .field.compact input[type="range"] { height: 44px; }
+
+  /* Revealed permanently: there is no hover to reveal it with. */
+  .segment-edit { opacity: 1; padding: 8px 12px; }
 }

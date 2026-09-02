@@ -79,6 +79,10 @@
      session is running. Same nodes throughout, so app.js never has to know. -->
 <section class="console" aria-label="会话设置与控制">
 
+  <!-- On a phone the sheet covers the button that opened it, so it needs a
+       close control of its own. app.js wires this up only when it exists. -->
+  <button id="sheetClose" class="sheet-close" type="button">完成</button>
+
   <div id="controls" class="setup">
     <div class="setup-groups">
 

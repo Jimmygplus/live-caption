@@ -1387,6 +1387,28 @@ function closeSheet() {
 const toggleSheet = () =>
   (el.body.classList.contains('sheet-open') ? closeSheet() : openSheet());
 
+// Escape closes the settings sheet. A native <dialog> already does this, so a
+// panel that ignores it reads as broken — and on a phone the sheet covers the
+// button that opened it, leaving only a thin strip of scrim to tap.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (!el.body.classList.contains('sheet-open')) return;
+  event.preventDefault();
+  closeSheet();
+});
+
+// A layout may offer an explicit close control inside the sheet itself.
+document.getElementById('sheetClose')?.addEventListener('click', closeSheet);
+
+// Tapping the backdrop dismisses a modal, matching Escape and what every other
+// sheet on a phone does. The target is the <dialog> only when the pointer
+// misses its contents, so this never fires from inside the form.
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+}
+
 // ---------------------------------------------------------------- floating window
 //
 // Document Picture-in-Picture gives a real always-on-top window that holds
