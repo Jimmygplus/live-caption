@@ -59,7 +59,7 @@ test('v2 markup serves the whole element contract app.js depends on', async () =
 
 test('sample codes shown to users match the formats actually accepted', async () => {
   const j = await readFile(new URL('../public/j.html', import.meta.url), 'utf8');
-  const { normalizeRoomCode, ROOM_CODE_LENGTH } = await import('../public/join-crypto.js');
+  const { isRoomCode, ROOM_CODE_LENGTH } = await import('../public/join-crypto.js');
   const { validTrialCode } = await import('../public/trial-code.js');
 
   // A placeholder is the only worked example most people ever see, so it drifts
@@ -67,7 +67,13 @@ test('sample codes shown to users match the formats actually accepted', async ()
   // after room codes became six characters, and I is not even in the alphabet.
   const roomSample = j.match(/id="roomCode"[\s\S]*?placeholder="([^"]+)"/)?.[1];
   assert.ok(roomSample, 'j.html must show a room code placeholder');
-  assert.equal(normalizeRoomCode(roomSample).length, ROOM_CODE_LENGTH);
+  // Checked raw, with only the display hyphen removed. Asserting on
+  // normalizeRoomCode() would prove nothing: it truncates to ROOM_CODE_LENGTH,
+  // so any sample of six characters or more passes — the ten-character
+  // ABCDE-FGHIJ this test exists to catch included.
+  const bareRoom = roomSample.replaceAll('-', '');
+  assert.equal(bareRoom.length, ROOM_CODE_LENGTH, `room sample ${roomSample} is the wrong length`);
+  assert.equal(isRoomCode(bareRoom), true, `room sample ${roomSample} uses characters the alphabet excludes`);
 
   for (const file of ['index.html', 'v2.html']) {
     const html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
