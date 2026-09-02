@@ -575,6 +575,31 @@ button { font: inherit; cursor: pointer; }
 .field.compact label { font-size: 11px; }
 .field.compact input[type="range"] { width: 84px; }
 
+/* Native range controls render in the platform accent — a blue that fights
+   everything else on the page. Both sliders are drawn here instead. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  margin: 0;
+}
+.field.compact input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--border);
+}
+.field.compact input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 15px; height: 15px; margin-top: -5.5px;
+  border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--surface); box-shadow: var(--sh-sm);
+}
+.field.compact input[type="range"]::-moz-range-track {
+  height: 4px; border-radius: 2px; background: var(--border);
+}
+.field.compact input[type="range"]::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface); box-shadow: var(--sh-sm);
+}
+
 .console-action { display: flex; align-items: center; }
 
 .sheet-close {
@@ -1047,13 +1072,26 @@ summary:focus-visible {
   .notice-dismiss { min-width: 44px; min-height: 44px; }
 
   /* The meter stays a thin line; only the area a thumb can land on grows. */
+  /* The hit area grows to 44px while the meter stays a thin line, so the
+     runnable track has to grow with it or the thumb centres on a 5px strip at
+     the very top and floats clear of the line it is supposed to ride. */
   .signal-track { height: 44px; }
-  .signal-track .meter { inset-block-start: 20px; }
-  .signal-track input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: 12px; }
+  .signal-track .meter { inset-block-start: 19px; }
+  .signal-track input[type="range"]::-webkit-slider-runnable-track { height: 44px; }
+  .signal-track input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: 13px; }
+  .signal-track input[type="range"]::-moz-range-track { height: 44px; }
   .signal-track input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; }
 
   .field.compact input[type="range"] { height: 44px; }
 
-  /* Revealed permanently: there is no hover to reveal it with. */
-  .segment-edit { opacity: 1; padding: 8px 12px; }
+  /* Revealed permanently, because there is no hover to reveal it with — which
+     is exactly why it cannot stay pinned over the first line of the caption.
+     In flow it costs a little height and covers nothing. */
+  .segment-edit {
+    opacity: 1;
+    position: static;
+    display: block;
+    margin: 8px 0 0 auto;
+    padding: 8px 14px;
+  }
 }
