@@ -38,6 +38,8 @@ import {
 } from './audience-crypto.js';
 import { AUDIENCE_RELAY_URL } from './relay-config.js';
 import { formatRoomCode, joinVerificationCode, wrapJoinSecret } from './join-crypto.js';
+import { TRIAL_BROKER_URL } from './trial-config.js';
+import { formatTrialCode, redeemTrialCode, validTrialCode } from './trial-code.js';
 
 const SONIOX_WS = 'wss://stt-rt.soniox.com/transcribe-websocket';
 const SONIOX_MODEL = 'stt-rt-v5';
@@ -164,6 +166,10 @@ const el = {
   keySoniox: $('keySoniox'),
   keyAnthropic: $('keyAnthropic'),
   keysClear: $('keysClear'),
+  trialSection: $('trialSection'),
+  trialCode: $('trialCode'),
+  trialApply: $('trialApply'),
+  trialStatus: $('trialStatus'),
   termsBtn: $('termsBtn'),
   termsDialog: $('termsDialog'),
   termsPack: $('termsPack'),
@@ -275,6 +281,12 @@ const app = {
   locked: true,           // pin the view to the newest caption
   audience: null,         // active QR text-input room and host polling state
   editingSegmentId: null, // finalized caption currently open in the correction dialog
+  trial: {
+    code: '',             // kept in memory only; sent in a POST body when Start is clicked
+    inSession: false,     // a single-use Soniox stream is active
+    endReason: '',
+    redemptionId: '',
+  },
 };
 
 // Domain vocabulary, applied to BOTH recognition and translation.
@@ -496,7 +508,10 @@ async function loadConfig() {
 
   if (isByok() && !keys.soniox) {
     el.startBtn.disabled = true;
-    showNotice('先填入你自己的 Soniox 密钥即可开始。密钥只存在本机浏览器，不经过任何服务器。', '填写密钥', () =>
+    const message = TRIAL_BROKER_URL
+      ? '可使用推荐码免费体验 Soniox 30 分钟，或填入自己的密钥。音频均由浏览器直接发送给 Soniox。'
+      : '先填入你自己的 Soniox 密钥即可开始。密钥只存在本机浏览器，不经过任何服务器。';
+    showNotice(message, TRIAL_BROKER_URL ? '使用推荐码或密钥' : '填写密钥', () =>
       el.keysBtn.click());
   } else {
     el.startBtn.disabled = false;
@@ -2381,8 +2396,10 @@ function buildSonioxConfig(apiKey, sampleRate) {
     enable_language_identification: true,
     enable_endpoint_detection: true,
     language_hints: twoWay ? [source, target] : [source],
-    client_reference_id: 'live-caption-web',
   };
+  // Trial keys already carry an immutable server-generated reference id. BYOK
+  // and the Node-server key keep the existing product identifier.
+  if (!app.trial.inSession) config.client_reference_id = 'live-caption-web';
 
   // Domain vocabulary makes the model spell jargon, product and people names
   // correctly instead of guessing at a phonetic match.
@@ -2405,6 +2422,16 @@ async function fetchTemporaryKey() {
   // Verified: Soniox accepts a long-lived key in the WebSocket config, so BYOK
   // needs no token-minting round trip and therefore no server.
   if (isByok()) {
+    if (app.trial.code) {
+      const result = await redeemTrialCode({ brokerUrl: TRIAL_BROKER_URL, code: app.trial.code });
+      app.trial.code = '';
+      app.trial.inSession = true;
+      app.trial.endReason = '';
+      app.trial.redemptionId = result.redemption_id || '';
+      el.trialCode.value = '';
+      showNotice('推荐码已兑换：本次 Soniox 字幕最多连续使用 30 分钟。停止、刷新或断线后不可恢复剩余时间。');
+      return result.api_key;
+    }
     if (!keys.soniox) throw new Error('未填写 Soniox 密钥，请点右上角「密钥」。');
     return keys.soniox;
   }
@@ -2455,6 +2482,9 @@ function handleSonioxMessage(raw) {
   if (app.rawLog.length > 400) app.rawLog.shift();
 
   if (message.error_code) {
+    if (app.trial.inSession && message.error_type === 'temp_api_key_session_expired') {
+      app.trial.endReason = 'expired';
+    }
     setError(`Soniox 错误 ${message.error_code}: ${message.error_message || message.error_type}`);
     setStatus('error', '识别服务报错');
     return;
@@ -2545,6 +2575,20 @@ function handleSonioxClose(sampleRate) {
   io.ws = null;
 
   if (!app.running || app.intentionalClose) return;
+
+  if (app.trial.inSession) {
+    const expired = app.trial.endReason === 'expired';
+    app.trial.inSession = false;
+    void stop().then(() => {
+      const message = expired
+        ? '30 分钟 Soniox 体验已结束。可使用自己的密钥继续。'
+        : '体验连接已结束。推荐码是一次连续体验，断线后不能恢复剩余时间。';
+      setError(message);
+      setStatus('error', expired ? '体验已结束' : '体验连接结束');
+      showNotice(message, '填写自己的密钥', () => el.keysBtn.click());
+    });
+    return;
+  }
 
   // Carry the audio clock forward, then reconnect with a fresh temporary key.
   app.msOffset += stream.lastProcMs || 0;
@@ -2816,6 +2860,8 @@ function finishSonioxStream(timeoutMs = 2000) {
 }
 
 async function stop() {
+  const endedTrial = app.trial.inSession;
+  app.trial.inSession = false;
   app.running = false;
   app.intentionalClose = true;
 
@@ -2844,6 +2890,10 @@ async function stop() {
   setControlsDisabled(false);
   persistNow();
   setStatus('idle', '已停止');
+  if (endedTrial) {
+    showNotice('本次推荐码体验已结束；临时密钥为单次使用，剩余时间不会保留。', '填写自己的密钥', () =>
+      el.keysBtn.click());
+  }
 }
 
 // ---------------------------------------------------------------- export
@@ -3112,7 +3162,42 @@ el.stage.addEventListener('keydown', (event) => {
 el.keysBtn.addEventListener('click', () => {
   el.keySoniox.value = keys.soniox;
   el.keyAnthropic.value = keys.anthropic;
+  el.trialSection.hidden = !(isByok() && TRIAL_BROKER_URL);
+  el.trialCode.value = formatTrialCode(app.trial.code);
+  el.trialStatus.textContent = app.trial.code
+    ? '推荐码已准备；点击“开始”时才会正式核销。'
+    : '';
+  el.trialStatus.dataset.state = app.trial.code ? 'ready' : '';
   el.keysDialog.showModal();
+});
+
+el.trialCode.addEventListener('input', () => {
+  const selection = el.trialCode.selectionStart;
+  el.trialCode.value = formatTrialCode(el.trialCode.value);
+  el.trialCode.setSelectionRange(selection, selection);
+  el.trialStatus.textContent = '';
+  el.trialStatus.dataset.state = '';
+});
+
+el.trialApply.addEventListener('click', () => {
+  if (!validTrialCode(el.trialCode.value)) {
+    el.trialStatus.textContent = '请输入主持方提供的 10 位推荐码。';
+    el.trialStatus.dataset.state = 'error';
+    el.trialCode.focus();
+    return;
+  }
+  app.trial.code = formatTrialCode(el.trialCode.value);
+  app.config.engines.soniox = true;
+  if (![...el.engine.options].some((option) => option.value === 'soniox')) {
+    el.engine.prepend(new Option('Soniox（30 分钟体验）', 'soniox'));
+  }
+  el.engine.value = 'soniox';
+  onEngineChange();
+  el.startBtn.disabled = false;
+  el.trialStatus.textContent = '推荐码已准备；点击“开始”时才会正式核销。';
+  el.trialStatus.dataset.state = 'ready';
+  el.keysDialog.close('trial');
+  showNotice('推荐码已准备。点击“开始”后才会核销，并开启一次最长 30 分钟的 Soniox 字幕体验。');
 });
 
 el.keysClear.addEventListener('click', () => {

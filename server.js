@@ -27,6 +27,7 @@ import {
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public/', import.meta.url));
 const PORT = Number(process.env.PORT || 5175);
+const HOST = process.env.HOST || undefined;
 
 const AUDIENCE_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const AUDIENCE_MAX_SESSIONS = 100;
@@ -519,7 +520,7 @@ const server = createServer(async (req, res) => {
 
 await loadDotEnv();
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const soniox = process.env.SONIOX_API_KEY ? '已就绪' : '缺失（在 .env 设置 SONIOX_API_KEY）';
   const providers = listProviders()
     .filter((p) => p.id !== 'soniox' && p.id !== 'none')

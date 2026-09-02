@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "live-caption-trial-broker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-02",
+  "vars": {
+    "ALLOWED_ORIGINS": "https://jimmygplus.github.io,http://localhost:5175,http://127.0.0.1:5175"
+  },
+  "d1_databases": [
+    {
+      "binding": "TRIAL_DB",
+      "database_name": "live-caption-trials",
+      "database_id": "89d27457-9685-4a71-9f33-1db827a6dbca",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  }
+}

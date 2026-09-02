@@ -232,10 +232,31 @@
 
 <dialog id="keysDialog" class="terms">
   <form method="dialog">
-    <h2>你的 API 密钥</h2>
+    <h2>启用 Soniox 高质量字幕</h2>
     <p class="hint">
-      密钥只存在这台设备的浏览器里，直接发给厂商，<strong>不经过任何中间服务器</strong>。
-      本站没有账号；字幕直播间只通过独立中继传送端到端加密的临时密文，语音和厂商密钥不会进入该中继。
+      音频始终由浏览器直接发给 Soniox，不经过字幕直播间中继。你可以使用一次性推荐码，
+      或填写自己的厂商密钥。
+    </p>
+
+    <section id="trialSection" class="trial-section" hidden aria-labelledby="trialTitle">
+      <h3 id="trialTitle">推荐码免费体验 30 分钟</h3>
+      <p class="hint">
+        每个推荐码兑换一次连续会话。点击“开始”时才会核销；开始后最多使用 30 分钟，
+        刷新或断线不会保留剩余时间。
+      </p>
+      <label for="trialCode">推荐码<span class="hint-inline">10 位 · 不区分连字符</span></label>
+      <div class="trial-code-row">
+        <input id="trialCode" type="text" maxlength="11" autocomplete="off" autocapitalize="characters"
+          spellcheck="false" placeholder="ABCDE-FGHIJ" aria-describedby="trialStatus" />
+        <button id="trialApply" type="button" class="primary">使用推荐码</button>
+      </div>
+      <p id="trialStatus" class="hint" role="status" aria-live="polite"></p>
+    </section>
+
+    <h3 class="key-section-title">使用自己的 API 密钥</h3>
+    <p class="hint">
+      自有密钥只存在这台设备的浏览器里并直接发给厂商，<strong>不经过任何中间服务器</strong>。
+      本站没有账号；字幕直播间只传送端到端加密的临时密文。
     </p>
 
     <label for="keySoniox">Soniox 密钥<span class="hint-inline">字幕识别 · 必填</span></label>

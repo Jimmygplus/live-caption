@@ -35,7 +35,7 @@ jobs:
           sed -i "s|\./styles\.css|./styles.css?v=$v|; s|\./app\.js|./app.js?v=$v|" public/index.html
           sed -i "s|\./input\.css|./input.css?v=$v|; s|\./input\.js|./input.js?v=$v|" public/input.html
           sed -i "s|\./join\.css|./join.css?v=$v|; s|\./join\.js|./join.js?v=$v|" public/j.html
-          sed -i "s|\./pcm-worklet\.js|./pcm-worklet.js?v=$v|; s|\./glossaries\.json|./glossaries.json?v=$v|; s|\./qr\.js|./qr.js?v=$v|; s|\./audio-check\.js|./audio-check.js?v=$v|; s|\./audio-source\.js|./audio-source.js?v=$v|; s|\./font-size\.js|./font-size.js?v=$v|; s|\./caption-state\.js|./caption-state.js?v=$v|; s|\./audience-crypto\.js|./audience-crypto.js?v=$v|; s|\./join-crypto\.js|./join-crypto.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|" public/app.js
+          sed -i "s|\./pcm-worklet\.js|./pcm-worklet.js?v=$v|; s|\./glossaries\.json|./glossaries.json?v=$v|; s|\./qr\.js|./qr.js?v=$v|; s|\./audio-check\.js|./audio-check.js?v=$v|; s|\./audio-source\.js|./audio-source.js?v=$v|; s|\./font-size\.js|./font-size.js?v=$v|; s|\./caption-state\.js|./caption-state.js?v=$v|; s|\./audience-crypto\.js|./audience-crypto.js?v=$v|; s|\./join-crypto\.js|./join-crypto.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|; s|\./trial-code\.js|./trial-code.js?v=$v|; s|\./trial-config\.js|./trial-config.js?v=$v|" public/app.js
           sed -i "s|\./audience-crypto\.js|./audience-crypto.js?v=$v|; s|\./caption-state\.js|./caption-state.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|" public/input.js
           sed -i "s|\./join-crypto\.js|./join-crypto.js?v=$v|; s|\./relay-config\.js|./relay-config.js?v=$v|" public/join.js
           echo "stamped $v"

@@ -554,6 +554,7 @@ body[data-view="ticker"] #live {
 }
 
 .terms h2 { margin: 0 0 4px; font-size: 17px; }
+.terms h3 { margin: 0; font-size: 14px; }
 
 .terms label {
   margin-top: 14px;
@@ -787,7 +788,8 @@ body[data-view="ticker"] .segment {
 .audio-level-status[data-state="silent"] { color: var(--danger); font-weight: 650; }
 #device.no-signal { outline: 2px solid var(--danger); outline-offset: 1px; }
 
-.terms input[type="password"] {
+.terms input[type="password"],
+.terms input[type="text"] {
   margin-top: 5px;
   font: inherit;
   font-size: 13px;
@@ -810,8 +812,34 @@ body[data-view="ticker"] .segment {
   width: 100%;
 }
 .terms input[type="password"]:focus-visible,
+.terms input[type="text"]:focus-visible,
 .terms input[type="url"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .terms a { color: var(--accent); }
+
+.trial-section {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.trial-section label { margin-top: 12px; }
+.trial-code-row { display: flex; gap: 8px; align-items: stretch; margin-top: 5px; }
+.trial-code-row input {
+  min-width: 0;
+  margin-top: 0 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.trial-code-row button { flex: none; }
+.trial-section #trialStatus { margin-top: 8px; min-height: 1.5em; }
+.trial-section #trialStatus[data-state="ready"] { color: var(--accent); }
+.trial-section #trialStatus[data-state="error"] { color: var(--danger); }
+.key-section-title {
+  margin-top: 18px !important;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
 
 /* ---------------------------------------------------------------- QR audience input */
 

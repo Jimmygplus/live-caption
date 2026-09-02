@@ -78,7 +78,7 @@ async function waitForServer() {
 test('QR audience input moves authenticated messages through the room queue', async () => {
   const child = spawn(process.execPath, ['server.js'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
