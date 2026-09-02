@@ -58,6 +58,7 @@ function env(overrides = {}) {
     SONIOX_API_KEY: SONIOX_KEY,
     TRIAL_RATE_SALT: SALT,
     TRIAL_PASSWORDS: `${PASSWORD},LAUNCH2026`,
+    TRIAL_DAILY_PER_ADDRESS: '50',
     ALLOWED_ORIGINS: ORIGIN,
     SONIOX_TEMP_KEY_URL: 'https://soniox.example/v1/auth/temporary-api-key',
     ...overrides,
@@ -179,7 +180,8 @@ test('an upstream failure is reported without a key and without extra state', as
 });
 
 test('trial worker rate-limits repeated attempts without storing raw IP addresses', async () => {
-  const e = env();
+  // Per-address daily ceiling lifted so this isolates the ten-minute window.
+  const e = env({ TRIAL_DAILY_PER_ADDRESS: '999' });
   const w = worker();
   let limited = 0;
   for (let i = 0; i < 12; i += 1) {
@@ -216,4 +218,35 @@ test('trial UI states the boundary and keeps the code out of the address bar', a
   // A shared ?k= link must not leave the code sitting in the URL afterwards.
   assert.match(app, /searchParams\.delete\('k'\)/);
   assert.match(app, /history\.replaceState/);
+});
+
+test('one address cannot drain the day it shares with everyone else', async () => {
+  const e = env({ TRIAL_DAILY_PER_ADDRESS: '2', TRIAL_DAILY_LIMIT: '99' });
+  const w = worker();
+  const heavy = { ip: '203.0.113.50' };
+
+  assert.equal((await w.fetch(request(PASSWORD, heavy), e)).status, 200);
+  assert.equal((await w.fetch(request(PASSWORD, heavy), e)).status, 200);
+
+  const third = await w.fetch(request(PASSWORD, heavy), e);
+  assert.equal(third.status, 429);
+  assert.match((await third.json()).error, /这台设备今天/);
+
+  // Someone else's device is unaffected — that is the point of the limit.
+  assert.equal((await w.fetch(request(PASSWORD, { ip: '203.0.113.51' }), e)).status, 200);
+
+  // And the address is only ever stored salted.
+  assert.ok(![...e.TRIAL_DB.counters.keys()].some((key) => key.includes('203.0.113.50')));
+});
+
+test('a wrong password does not burn the per-address allowance either', async () => {
+  const e = env({ TRIAL_DAILY_PER_ADDRESS: '1' });
+  const w = worker();
+  const visitor = { ip: '203.0.113.60' };
+
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await w.fetch(request('WRONGPASS', visitor), e)).status, 403);
+  }
+  assert.equal((await w.fetch(request(PASSWORD, visitor), e)).status, 200,
+    'guesses must leave the single allowed trial intact');
 });

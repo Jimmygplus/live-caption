@@ -13,6 +13,9 @@ const RATE_WINDOW_MS = 10 * 60 * 1_000;
 const RATE_ATTEMPTS = 10;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_DAILY_LIMIT = 20;
+// Generous enough for a household or office behind one address, tight enough
+// that draining the day still takes several distinct networks.
+const DEFAULT_PER_ADDRESS_LIMIT = 3;
 const TRIAL_SECONDS = 30 * 60;
 // Reserved identity sharing trial_rate_limits with the per-IP rows. Real
 // identities are base64url SHA-256 digests — 43 characters, never this word.
@@ -106,6 +109,17 @@ async function withinDailyLimit(env, now) {
   return await bumpCounter(env, DAILY_IDENTITY, Math.floor(now / DAY_MS) * DAY_MS) <= limit;
 }
 
+// Keeps one enthusiastic visitor from draining the day's allowance so the code
+// still works for everyone else it was shared with. Deliberately not a device
+// fingerprint: that is hostile to privacy, unreliable across browsers, and
+// still loses to an incognito window — it would only bind the honest.
+async function withinAddressDailyLimit(env, request, now) {
+  const address = request.headers.get('cf-connecting-ip') || 'unknown';
+  const identity = await hmac(env.TRIAL_RATE_SALT, `day:${address}`);
+  const limit = Number(env.TRIAL_DAILY_PER_ADDRESS || DEFAULT_PER_ADDRESS_LIMIT);
+  return await bumpCounter(env, identity, Math.floor(now / DAY_MS) * DAY_MS) <= limit;
+}
+
 async function redeem(request, env, fetchImpl, now) {
   if (!env.TRIAL_DB || !env.SONIOX_API_KEY || !env.TRIAL_RATE_SALT || !trialPasswords(env).size) {
     return json(request, env, { error: '体验服务尚未配置。' }, 503);
@@ -136,9 +150,12 @@ async function redeem(request, env, fetchImpl, now) {
     return json(request, env, { error: '推荐码无效。' }, 403);
   }
 
-  // Counted only after the code checks out, so wrong guesses cannot exhaust the
-  // day's allowance. The count is not rolled back if Soniox then fails: an
+  // Both counted only after the code checks out, so wrong guesses cannot
+  // exhaust either allowance. Neither is rolled back if Soniox then fails: an
   // approximate cap is worth far less complexity than an exact one.
+  if (!await withinAddressDailyLimit(env, request, now)) {
+    return json(request, env, { error: '这台设备今天已经体验过了，请明天再试。' }, 429);
+  }
   if (!await withinDailyLimit(env, now)) {
     return json(request, env, { error: '今日体验名额已用完，请明天再试。' }, 503);
   }
