@@ -1773,6 +1773,42 @@ function patchFinalCaption(segment, patch, { expectedRevision = segment.revision
   return true;
 }
 
+// On a touch screen there is no hover to reveal the per-caption edit button
+// with, and showing one under every line turns the transcript into a column of
+// buttons — the captions are the product, corrections are rare. Long-press the
+// caption instead: no persistent chrome, and the same editor either way.
+function bindLongPressToCorrect(list) {
+  const HOLD_MS = 500;
+  const SLOP = 10;
+  let timer = null;
+  let origin = null;
+
+  const cancel = () => { clearTimeout(timer); timer = null; origin = null; };
+
+  list.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse') return;
+    const li = event.target.closest('li.segment');
+    if (!li) return;
+    origin = { x: event.clientX, y: event.clientY };
+    timer = setTimeout(() => {
+      const segment = app.segments.find((s) => String(s.id) === li.dataset.id);
+      if (segment) openCaptionEditor(segment);
+      cancel();
+    }, HOLD_MS);
+  });
+
+  // A drag is a scroll, and a lift before the hold elapses is a plain tap.
+  list.addEventListener('pointermove', (event) => {
+    if (!origin) return;
+    if (Math.abs(event.clientX - origin.x) > SLOP || Math.abs(event.clientY - origin.y) > SLOP) cancel();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+    list.addEventListener(type, cancel);
+  }
+}
+
+bindLongPressToCorrect(el.captions);
+
 function openCaptionEditor(segment) {
   app.editingSegmentId = segment.id;
   el.captionEditOriginal.value = segment.orig;
@@ -2099,6 +2135,18 @@ function setAudioSignalState(state, message = '') {
   el.device.title = state === 'silent'
     ? `当前输入：${device}。没有检测到声音，请说话测试、检查 macOS 输入音量，或改选一个具体麦克风。`
     : `当前输入：${device}`;
+}
+
+// Called when the recogniser returns tokens. Latches the same flag the level
+// meter would have set, so a meter that never reports cannot leave a false
+// "no sound" warning standing for the rest of the session.
+function noteRecognizerActivity() {
+  if (io.hasDetectedSignal) return;
+  io.hasDetectedSignal = true;
+  clearTimeout(io.silenceTimer);
+  // Tokens are stronger evidence than the meter, so say so plainly rather than
+  // falling back to "please test your microphone" while captions are running.
+  if (el.audioLevelStatus.dataset.state === 'silent') setAudioSignalState('active');
 }
 
 function beginAudioSignalCheck(track) {
@@ -2506,6 +2554,12 @@ function handleSonioxMessage(raw) {
   // __lc.dump() from the console.
   app.rawLog.push({ t: Date.now() - app.startedAt, m: message });
   if (app.rawLog.length > 400) app.rawLog.shift();
+
+  // Text coming back is proof the audio arrived, whatever the level meter
+  // believes. Telling someone to change their input while their words are
+  // appearing on screen is worse than saying nothing: the advice is wrong and
+  // it points them away from whatever the real problem is.
+  if (message.tokens?.length) noteRecognizerActivity();
 
   if (message.error_code) {
     if (app.trial.inSession && message.error_type === 'temp_api_key_session_expired') {

@@ -1084,14 +1084,9 @@ summary:focus-visible {
 
   .field.compact input[type="range"] { height: 44px; }
 
-  /* Revealed permanently, because there is no hover to reveal it with — which
-     is exactly why it cannot stay pinned over the first line of the caption.
-     In flow it costs a little height and covers nothing. */
-  .segment-edit {
-    opacity: 1;
-    position: static;
-    display: block;
-    margin: 8px 0 0 auto;
-    padding: 8px 14px;
-  }
+  /* No per-caption button at all. Showing one under every line put a column of
+     buttons down a transcript that should be nothing but text, to serve an
+     action taken a handful of times a session. Long-press a caption instead —
+     wired in app.js, same editor. */
+  .segment-edit { display: none; }
 }
