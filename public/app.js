@@ -208,6 +208,8 @@ const el = {
   noticeAction: $('noticeAction'),
   noticeDismiss: $('noticeDismiss'),
   pipBtn: $('pipBtn'),
+  typedDock: $('typedDock'),
+  typedSoundBtn: $('typedSoundBtn'),
   lockBtn: $('lockBtn'),
   themeBtn: $('themeBtn'),
   themeIcon: $('themeIcon'),
@@ -901,6 +903,96 @@ function publishAudienceSegment(segment, state = 'final') {
   }, { persist: true });
 }
 
+// A typed contribution scrolls past like any other caption, which is exactly
+// wrong for the moment it exists to serve: a room is watching this screen and
+// waiting for the person who cannot speak. So it also lands in a fixed strip
+// and stays there long enough to be read.
+const TYPED_DWELL_MS = 5_000;
+const TYPED_MAX_NOTES = 3;
+const typedNotes = new Map();
+
+let typedSoundOn = localStorage.getItem('lc.typedSound') !== 'off';
+let cueContext = null;
+
+// A short, soft two-note chime rather than an alert. Everything visual only
+// reaches whoever is already looking at the screen; this is the one thing that
+// turns heads toward it, and without it "让大家一起直接看到" does not happen.
+function playTypedCue() {
+  if (!typedSoundOn) return;
+  try {
+    cueContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (cueContext.state === 'suspended') void cueContext.resume();
+    const now = cueContext.currentTime;
+    for (const [index, hz] of [660, 880].entries()) {
+      const osc = cueContext.createOscillator();
+      const gain = cueContext.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+      const at = now + index * 0.09;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.09, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+      osc.connect(gain).connect(cueContext.destination);
+      osc.start(at);
+      osc.stop(at + 0.24);
+    }
+  } catch {
+    /* Audio output is a courtesy; never let it break the caption path. */
+  }
+}
+
+function dropTypedNote(id) {
+  const note = typedNotes.get(id);
+  if (!note) return;
+  clearTimeout(note.timer);
+  note.node.remove();
+  typedNotes.delete(id);
+  el.typedDock.hidden = typedNotes.size === 0;
+}
+
+function showTypedNote(segment, author) {
+  const node = document.createElement('article');
+  node.className = 'typed-note';
+  const tag = document.createElement('p');
+  tag.className = 'typed-tag';
+  tag.textContent = `✍ ${author || '现场参与者'}`;
+  const text = document.createElement('p');
+  text.className = 'typed-text';
+  text.textContent = segment.orig;
+  const trans = document.createElement('p');
+  trans.className = 'typed-trans';
+  node.append(tag, text, trans);
+
+  el.typedDock.append(node);
+  el.typedDock.hidden = false;
+
+  // Oldest first: a burst of two or three should read as a group, not shove the
+  // earlier lines off before anyone has finished them.
+  while (typedNotes.size >= TYPED_MAX_NOTES) dropTypedNote(typedNotes.keys().next().value);
+
+  typedNotes.set(segment.id, {
+    node,
+    trans,
+    timer: setTimeout(() => dropTypedNote(segment.id), TYPED_DWELL_MS),
+  });
+  playTypedCue();
+}
+
+// The translation arrives after the message, so fill it in if the note is still
+// on screen rather than making the reader wait for a second appearance.
+function updateTypedNote(segment) {
+  const note = typedNotes.get(segment.id);
+  if (note) note.trans.textContent = segment.trans || '';
+}
+
+el.typedSoundBtn?.addEventListener('click', () => {
+  typedSoundOn = !typedSoundOn;
+  localStorage.setItem('lc.typedSound', typedSoundOn ? 'on' : 'off');
+  el.typedSoundBtn.setAttribute('aria-pressed', String(typedSoundOn));
+  if (typedSoundOn) playTypedCue();
+});
+el.typedSoundBtn?.setAttribute('aria-pressed', String(typedSoundOn));
+
 function receiveAudienceMessage(message, session) {
   const startMs = audienceMessageTime(message, session);
   const segment = pushSegment({
@@ -911,6 +1003,7 @@ function receiveAudienceMessage(message, session) {
     source: 'typed',
     author: message.name,
   });
+  showTypedNote(segment, message.name);
   const detectedLanguage = message.language === 'auto'
     ? detectTypedLanguage(message.text)
     : message.language || null;
@@ -1893,6 +1986,7 @@ function patchFinalCaption(segment, patch, { expectedRevision = segment.revision
   persistSoon(); // the translation is part of the record, not just the view
   publishAudienceSegment(segment, segment.state);
   renderSegmentContent(segment);
+  updateTypedNote(segment);
   scrollToBottom();
   return true;
 }
@@ -3523,6 +3617,11 @@ el.noticeDismiss.addEventListener('click', () => {
 // both lines to read with the same weight.
 // The floating window is a separate document with its own root, so anything set
 // as a custom property has to be written to both or the two drift apart.
+// Theme is identical in both windows; only the size has to be recomputed.
+function styleRoots() {
+  return [document.documentElement, app.pip?.document.documentElement].filter(Boolean);
+}
+
 // The sliders express an intent — how big, and how much larger the original is
 // than the translation — for the window the reader is looking at. Copying the
 // pixel value into a small floating window renders two words a line, and
