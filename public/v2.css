@@ -176,6 +176,20 @@ body[data-state="error"] .dot { background: var(--danger); }
 .chip-btn.active { color: var(--accent); border-color: var(--accent-dim); }
 .chip-btn[hidden] { display: none; }
 
+/* Icons are a mix of text symbols and colour emoji, and an emoji's line box is
+   taller than a glyph's — the 🔑 button stood 3px taller than the ones beside
+   it, so the row of borders no longer lined up. A fixed box makes every icon
+   cost the same regardless of which one the font decides to colour — applied to
+   every .ico, since the toolbar mixes 📌🔔⬇ with plain glyphs like ⧉. */
+.ico {
+  display: grid;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 16px;
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* ── Stage and captions ──────────────────────────────────────────────────── */
 
 main#stage {
@@ -1026,17 +1040,23 @@ body.theater .statusbar { display: none; }
 
 /* The bar itself has to stay in the render tree, because a fixed-position child
    of a display:none parent is not rendered either — and the pairing code is the
-   one thing that must survive theatre mode. Everything else in it goes. */
-body.theater .topbar {
+   one thing that must survive theatre mode. Everything else in it goes.
+
+   Scoped to :not(.peek) so that peeking simply stops matching these rules and
+   every element keeps the display its own rule gave it. Peek used to un-hide
+   them with `display: revert`, which reverts to the user-agent value rather
+   than the author's: .brand and .topbar-actions came back as blocks, losing
+   the flex row, its gap and its vertical centring, and the buttons fell back
+   to inline baseline alignment on top of each other. */
+body.theater:not(.peek) .topbar {
   display: block;
   padding: 0;
   background: transparent;
   border: 0;
   pointer-events: none;
 }
-body.theater .topbar > *:not(.pairing-chip) { display: none; }
+body.theater:not(.peek) .topbar > *:not(.pairing-chip) { display: none; }
 
-body.theater.peek .topbar > * { display: revert; }
 /* Peeking brings the whole bar back, so the chip rejoins it rather than staying
    pinned and dimmed in a corner of a bar that is now fully visible. */
 body.theater.peek .pairing-chip {
@@ -1045,17 +1065,18 @@ body.theater.peek .pairing-chip {
   margin-inline-start: 14px;
 }
 body.theater.peek .topbar {
-  display: flex;
-  padding: 11px 20px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border-soft);
-  pointer-events: auto;
   position: fixed;
   inset-block-start: 0;
   inset-inline: 0;
   z-index: 35;
   box-shadow: var(--sh-md);
+  /* Room at the end of the row for the exit button, which is fixed to this same
+     corner and would otherwise be drawn straight over the last two buttons. */
+  padding-inline-end: 150px;
 }
+/* While the bar is up the button is part of it, not a ghost floating over the
+   captions, so it stops hiding. */
+body.theater.peek #theaterExit { opacity: 1; }
 
 #theaterExit {
   position: fixed;

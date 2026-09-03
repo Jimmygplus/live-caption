@@ -141,21 +141,36 @@ test('the pairing code survives theatre mode, which is when it matters most', as
   const css = await readFile(new URL('../public/v2.css', import.meta.url), 'utf8');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  // Assert on rules, not prose: a comment explaining a mistake must not read as
+  // the mistake itself.
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
 
   assert.match(html, /id="pairingChip"/);
 
   // The chip lives in the top bar, and theatre mode hides that bar. A
   // fixed-position child of a display:none parent is not rendered either, so
   // the bar has to stay in the tree with everything else in it hidden instead.
-  const theatre = css.match(/body\.theater \.topbar \{[\s\S]*?\n\}/)?.[0] || '';
+  const theatre = rules.match(/body\.theater:not\(\.peek\) \.topbar \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(theatre, /display: block/, 'the bar itself must keep rendering');
-  assert.doesNotMatch(css, /body\.theater \.topbar,/, 'it must not be display:none any more');
-  assert.match(css, /body\.theater \.topbar > \*:not\(\.pairing-chip\) \{ display: none; \}/);
+  assert.doesNotMatch(rules, /body\.theater \.topbar,/, 'it must not be display:none any more');
+  assert.match(rules, /body\.theater:not\(\.peek\) \.topbar > \*:not\(\.pairing-chip\) \{ display: none; \}/);
+
+  // Peeking must stop matching the hide rules rather than undo them. `revert`
+  // rolls back to the user-agent value, not the author's, so it returned .brand
+  // and .topbar-actions as blocks — no flex row, no gap, no vertical centring,
+  // and the buttons piled up on the baseline.
+  assert.doesNotMatch(rules, /display:\s*revert/, 'peek must not un-hide with revert');
+
+  // The exit button is fixed to the same corner the bar's buttons end at, so
+  // the bar has to leave it room or the two draw on top of each other.
+  const peek = rules.match(/body\.theater\.peek \.topbar \{[\s\S]*?\n\}/)?.[0] || '';
+  assert.match(peek, /padding-inline-end: \d+px/);
 
   // Projected to a room is exactly when a latecomer needs to read it.
-  assert.match(css, /body\.theater \.pairing-chip \{[\s\S]*?position: fixed/);
+  assert.match(rules, /body\.theater \.pairing-chip \{[\s\S]*?position: fixed/);
 
   // Re-issuing is the eject button, so it has to be reachable from the chip.
   assert.match(app, /function reissuePairingCode/);
   assert.match(app, /rooms\/\$\{encodeURIComponent\(session\.id\)\}\/pairing/);
 });
+
