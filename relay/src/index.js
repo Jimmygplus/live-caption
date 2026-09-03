@@ -9,16 +9,28 @@ const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 // The room id is internal and permanent; nobody reads it aloud, so it is long.
 // What people type is a pairing code, and that is deliberately separate: a code
-// has to be revocable — the host's only way to eject someone is to mint a new
-// one — and revoking it must not disturb the room or the people already in it.
+// has to be replaceable without disturbing the room or the people already in
+// it. Replacing it is not an eject — whoever is already inside holds the join
+// secret and never presents the code again — it only stops the old code from
+// letting anyone else in.
+//
+// A code is the door to one meeting, so it stays open exactly as long as that
+// meeting: minted with the room's own expiry, and dropped the moment the host
+// closes the room. It used to carry a separate fifteen-minute clock, which meant
+// it died in the middle of a running meeting and turned latecomers away while
+// everyone was still talking — and it put a countdown on screen that read as a
+// deadline for the meeting itself.
 const ROOM_ID_LENGTH = 16;
 const PAIRING_DIGITS = 6;
-const PAIRING_TTL_MS = 15 * 60 * 1000;
 const PAIRING_ATTEMPTS = 5;
 
 // Six digits is a million combinations, so resolution has to be rate limited or
-// the space is walkable. Counted per address in a Durable Object; the address
-// only ever appears in a DO name, which is stored as a derived id, never as text.
+// the space is walkable — the more so now that a code lives for the whole
+// meeting rather than fifteen minutes. Only failures are counted: an office
+// where eight people join over one NAT would otherwise throttle itself, while
+// somebody enumerating codes is wrong every time and still runs out.
+// Counted per address in a Durable Object; the address only ever appears in a
+// DO name, which is stored as a derived id, never as text.
 const RESOLVE_WINDOW_MS = 10 * 60 * 1000;
 const RESOLVE_MAX = 20;
 const ALLOWED_ORIGINS = new Set([
@@ -52,8 +64,7 @@ const pairingStub = (env, code) => env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idF
 // Claims a free code for a room, replacing whatever the room had before. The
 // old code is not actively deleted — it simply stops resolving to this room
 // once this one is recorded, and expires on its own schedule.
-async function mintPairingCode(env, roomId, now) {
-  const expiresAt = now + PAIRING_TTL_MS;
+async function mintPairingCode(env, roomId, now, expiresAt) {
   for (let attempt = 0; attempt < PAIRING_ATTEMPTS; attempt += 1) {
     const code = randomPairingCode();
     const claimed = await pairingStub(env, code).fetch('https://audience-room/internal/pair-claim', {
@@ -125,7 +136,7 @@ export default {
       });
       if (!initialized.ok) return json(request, { error: 'Could not create room.' }, 503);
 
-      const pairing = await mintPairingCode(env, id, now);
+      const pairing = await mintPairingCode(env, id, now, expiresAt);
       if (!pairing) return json(request, { error: 'Could not issue a pairing code.' }, 503);
       return json(request, {
         id,
@@ -152,7 +163,10 @@ export default {
       if (verified.status === 401) return json(request, { error: 'Invalid room credential.' }, 401);
       if (!verified.ok) return json(request, { error: 'Room not found.' }, 404);
 
-      const pairing = await mintPairingCode(env, pairMatch[1], Date.now());
+      // The replacement inherits the room's deadline, not a fresh one of its
+      // own: it is the same door to the same meeting.
+      const { expiresAt: roomExpiresAt } = await verified.json();
+      const pairing = await mintPairingCode(env, pairMatch[1], Date.now(), roomExpiresAt);
       if (!pairing) return json(request, { error: 'Could not issue a pairing code.' }, 503);
       return json(request, { pairingCode: pairing.code, pairingExpiresAt: pairing.expiresAt });
     }
@@ -164,15 +178,19 @@ export default {
     if (resolveMatch && request.method === 'GET') {
       const address = request.headers.get('cf-connecting-ip') || 'unknown';
       const limiter = env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(`rl:${address}`));
-      const allowed = await limiter.fetch('https://audience-room/internal/rate', {
+      const spend = (bump) => limiter.fetch('https://audience-room/internal/rate', {
         method: 'POST',
-        body: JSON.stringify({ now: Date.now(), windowMs: RESOLVE_WINDOW_MS, max: RESOLVE_MAX }),
+        body: JSON.stringify({ now: Date.now(), windowMs: RESOLVE_WINDOW_MS, max: RESOLVE_MAX, bump }),
       });
+      const allowed = await spend(false);
       if (!allowed.ok) return json(request, { error: '尝试次数过多，请稍后再试。' }, 429);
 
       const found = await pairingStub(env, resolveMatch[1])
         .fetch(`https://audience-room/internal/pair-resolve?now=${Date.now()}`);
-      if (!found.ok) return json(request, { error: '配对码无效或已过期。' }, 404);
+      if (!found.ok) {
+        await spend(true);
+        return json(request, { error: '配对码无效或已过期。' }, 404);
+      }
       return json(request, await found.json());
     }
 
@@ -190,6 +208,15 @@ export default {
       });
       if (closed.status === 401) return json(request, { error: 'Invalid room credential.' }, 401);
       if (closed.status === 404) return json(request, { error: 'Room not found.' }, 404);
+
+      // Ending the meeting takes the code with it, so the digits read out in
+      // that room cannot be used to walk back into it afterwards.
+      if (/^[0-9]{6}$/.test(body.code || '')) {
+        await pairingStub(env, body.code).fetch('https://audience-room/internal/pair-drop', {
+          method: 'POST',
+          body: JSON.stringify({ roomId: closeMatch[1] }),
+        });
+      }
       return json(request, { closed: true });
     }
 
@@ -235,12 +262,22 @@ export class AudienceRoom {
     }
 
     if (url.pathname === '/internal/rate' && request.method === 'POST') {
-      const { now, windowMs, max } = await request.json();
+      const { now, windowMs, max, bump = true } = await request.json();
       const windowStart = Math.floor(now / windowMs) * windowMs;
       const held = await this.state.storage.get('rate');
-      const attempts = held?.windowStart === windowStart ? held.attempts + 1 : 1;
-      await this.state.storage.put('rate', { windowStart, attempts });
-      return new Response(null, { status: attempts <= max ? 204 : 429 });
+      const prior = held?.windowStart === windowStart ? held.attempts : 0;
+      if (!bump) return new Response(null, { status: prior < max ? 204 : 429 });
+      await this.state.storage.put('rate', { windowStart, attempts: prior + 1 });
+      return new Response(null, { status: prior + 1 <= max ? 204 : 429 });
+    }
+
+    // Closing the meeting drops its code. Guarded by the room id so a stale
+    // code that has since been reassigned elsewhere is left alone.
+    if (url.pathname === '/internal/pair-drop' && request.method === 'POST') {
+      const body = await request.json();
+      const held = await this.state.storage.get('pair');
+      if (held && held.roomId === body.roomId) await this.state.storage.delete('pair');
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname === '/internal/verify-host' && request.method === 'POST') {
@@ -248,7 +285,7 @@ export class AudienceRoom {
       if (!meta || meta.closed) return new Response('Room not found.', { status: 404 });
       const body = await request.json();
       if (body.hostHash !== meta.hostHash) return new Response('Invalid credential.', { status: 401 });
-      return new Response(null, { status: 204 });
+      return Response.json({ expiresAt: meta.expiresAt });
     }
 
     if (url.pathname === '/internal/init' && request.method === 'POST') {

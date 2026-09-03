@@ -766,9 +766,6 @@ body.console-collapsed .console-chevron { transform: rotate(-90deg); }
 .pairing-chip[hidden] { display: none; }
 .pairing-label { font-size: 11px; color: var(--dim); }
 #pairingCode { font-size: 17px; letter-spacing: .16em; }
-#pairingCountdown { font-size: 11px; color: var(--dim); }
-.pairing-chip[data-state="expired"] { border-color: var(--warn); }
-.pairing-chip[data-state="expired"] #pairingCountdown { color: var(--warn); }
 
 /* Theatre mode hides the bar this normally sits in, but that is the projected,
    full-room case — the one where a latecomer most needs to read it. It stays,

@@ -210,7 +210,6 @@ const el = {
   pipBtn: $('pipBtn'),
   pairingChip: $('pairingChip'),
   pairingCode: $('pairingCode'),
-  pairingCountdown: $('pairingCountdown'),
   typedDock: $('typedDock'),
   typedSoundBtn: $('typedSoundBtn'),
   lockBtn: $('lockBtn'),
@@ -533,35 +532,22 @@ const AUDIENCE_HOST_SESSION_KEY = 'lc.audience.host-session.v1';
 // The pairing code is on screen for the whole session rather than behind the
 // dialog that created it. A latecomer should be able to join without the host
 // stopping the meeting to dig it out.
-let pairingTimer = null;
+
 
 // app.js is shared with the previous layout, which has none of these elements.
 // Anything added since has to tolerate their absence or it takes that page down
 // at load — as this did.
+// The code now lives as long as the meeting does, so there is nothing to tick
+// down and nothing to refresh every second. The chip showed a running clock,
+// which read as a deadline on the meeting itself and made people anxious about
+// a number that did not concern them.
 function renderPairingChip() {
   if (!el.pairingChip) return;
   const session = app.audience;
   const code = session?.pairingCode;
-  if (!code || session.closed) {
-    clearInterval(pairingTimer);
-    pairingTimer = null;
-    el.pairingChip.hidden = true;
-    return;
-  }
-  el.pairingChip.hidden = false;
+  el.pairingChip.hidden = !code || !!session.closed;
+  if (el.pairingChip.hidden) return;
   el.pairingCode.textContent = code;
-
-  const left = Math.max(0, Math.round(((session.pairingExpiresAt || 0) - Date.now()) / 1000));
-  el.pairingChip.dataset.state = left > 0 ? 'live' : 'expired';
-  el.pairingCountdown.textContent = left > 0
-    ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
-    : '已过期 · 点击更新';
-}
-
-function watchPairingCode() {
-  clearInterval(pairingTimer);
-  renderPairingChip();
-  pairingTimer = setInterval(renderPairingChip, 1000);
 }
 
 // Re-issuing is also the eject button: whoever holds the previous code stops
@@ -746,7 +732,7 @@ async function restoreAudienceHostSession() {
   }
   const session = makeRelayAudienceSession(saved);
   app.audience = session;
-  watchPairingCode();
+  renderPairingChip();
   try {
     await connectRelayHost(session, true);
     showAudienceSession(session);
@@ -1283,7 +1269,7 @@ async function createAudienceSession() {
         createdAt: Date.now(),
       });
       app.audience = session;
-      watchPairingCode();
+      renderPairingChip();
       await connectRelayHost(session, true);
       saveAudienceHostSession(session);
       showAudienceSession(session);
@@ -1345,7 +1331,7 @@ async function endAudienceSession() {
         await fetch(`${session.relayUrl.replace(/\/$/, '')}/v1/rooms/${encodeURIComponent(session.id)}/close`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ hostHash: session.hostTokenHash }),
+          body: JSON.stringify({ hostHash: session.hostTokenHash, code: session.pairingCode }),
         });
       } catch {
         // The room still expires server-side; ending locally must remain instant.

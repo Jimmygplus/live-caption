@@ -661,56 +661,45 @@ test('host controls combine signal threshold, link font sizes and default to sho
 // only by their name prefix, so the fake has to keep them apart the same way.
 function fakeNamespace() {
   const stores = new Map();
+  const rooms = new Map();
   const store = (name) => {
     if (!stores.has(name)) stores.set(name, new Map());
     return stores.get(name);
   };
+
+  // The real Durable Object class, backed by a Map instead of real storage —
+  // not a second implementation of it. This used to be a hand-written stand-in
+  // that answered the same internal paths, which meant the server's rules lived
+  // in two places and the copy here could quietly fall behind the original. It
+  // did: after the rate limiter stopped charging successful lookups, the tests
+  // still passed against a fake that charged them.
+  const room = (name) => {
+    if (!rooms.has(name)) {
+      const kv = store(name);
+      rooms.set(name, new AudienceRoom({
+        // Closing a room hangs up on whoever is connected. Nobody is, here.
+        getWebSockets: () => [],
+        storage: {
+          async get(key) { return kv.get(key); },
+          async put(key, value) { kv.set(key, value); },
+          async delete(key) { return kv.delete(key); },
+          async deleteAll() { kv.clear(); },
+          // The room sets an alarm to sweep itself. Nothing here waits on the
+          // clock, so remember the time and never fire it.
+          async setAlarm(time) { kv.set('__alarm', time); },
+          async getAlarm() { return kv.get('__alarm') ?? null; },
+          async deleteAlarm() { kv.delete('__alarm'); },
+        },
+      }));
+    }
+    return rooms.get(name);
+  };
+
   return {
     stores,
     idFromName: (name) => ({ name }),
     get: ({ name }) => ({
-      async fetch(input, init = {}) {
-        const url = new URL(typeof input === 'string' ? input : input.url);
-        const body = init.body ? JSON.parse(init.body) : {};
-        const kv = store(name);
-
-        if (url.pathname === '/internal/init') {
-          const current = kv.get('meta');
-          if (current && !current.closed && current.expiresAt > Date.now()) {
-            return new Response('exists', { status: 409 });
-          }
-          kv.set('meta', { ...body, closed: false });
-          return new Response(null, { status: 204 });
-        }
-        if (url.pathname === '/internal/verify-host') {
-          const meta = kv.get('meta');
-          if (!meta || meta.closed) return new Response('no room', { status: 404 });
-          if (meta.hostHash !== body.hostHash) return new Response('bad', { status: 401 });
-          return new Response(null, { status: 204 });
-        }
-        if (url.pathname === '/internal/pair-claim') {
-          const held = kv.get('pair');
-          if (held && held.expiresAt > body.now && held.roomId !== body.roomId) {
-            return new Response('taken', { status: 409 });
-          }
-          kv.set('pair', { roomId: body.roomId, expiresAt: body.expiresAt });
-          return new Response(null, { status: 204 });
-        }
-        if (url.pathname === '/internal/pair-resolve') {
-          const held = kv.get('pair');
-          const now = Number(url.searchParams.get('now')) || Date.now();
-          if (!held || held.expiresAt <= now) return new Response('unknown', { status: 404 });
-          return Response.json({ roomId: held.roomId, expiresAt: held.expiresAt });
-        }
-        if (url.pathname === '/internal/rate') {
-          const windowStart = Math.floor(body.now / body.windowMs) * body.windowMs;
-          const held = kv.get('rate');
-          const attempts = held?.windowStart === windowStart ? held.attempts + 1 : 1;
-          kv.set('rate', { windowStart, attempts });
-          return new Response(null, { status: attempts <= body.max ? 204 : 429 });
-        }
-        throw new Error(`unexpected internal path ${url.pathname}`);
-      },
+      fetch: (input, init) => room(name).fetch(new Request(input, init)),
     }),
   };
 }
@@ -742,7 +731,9 @@ test('a room keeps a permanent id while its pairing code can be replaced', async
 
   assert.match(room.id, /^[A-HJ-NP-Z2-9]{16}$/, 'the room id is internal, so it is long');
   assert.match(room.pairingCode, /^[0-9]{6}$/, 'what people read aloud is six digits');
-  assert.ok(room.pairingExpiresAt > Date.now(), 'the code carries its own expiry');
+  // The code is the door to this meeting, so it is open exactly as long as the
+  // meeting is. A separate, shorter clock used to shut the door mid-meeting.
+  assert.equal(room.pairingExpiresAt, room.expiresAt, "the code expires with the room, not before it");
 
   // The code is a ticket to the door: it yields a room id and nothing else.
   const resolved = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
@@ -760,6 +751,40 @@ test('a room keeps a permanent id while its pairing code can be replaced', async
 
   const stillThere = await relayWorker.fetch(relayRequest(`/v1/pairing/${next.pairingCode}`), env);
   assert.equal((await stillThere.json()).roomId, room.id, 'the room outlives its codes');
+  assert.equal(next.pairingExpiresAt, room.expiresAt, 'a replacement inherits the same deadline');
+});
+
+test('ending the meeting takes its pairing code with it', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  const room = await (await createRoom(env)).json();
+
+  const live = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
+  assert.equal(live.status, 200);
+
+  const closed = await relayWorker.fetch(relayRequest(`/v1/rooms/${room.id}/close`,
+    { method: 'POST', body: { hostHash: HOST_HASH, code: room.pairingCode } }), env);
+  assert.equal(closed.status, 200);
+
+  // Otherwise the digits read out in that room stay a way back into it for the
+  // rest of the room's six hours.
+  const after = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
+  assert.equal(after.status, 404, 'the code must not outlive the meeting');
+});
+
+test('a code that has moved on to another room is not dropped by the old host', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  const first = await (await createRoom(env)).json();
+  const second = await (await createRoom(env)).json();
+
+  // Pretend the second room ended up holding the first room's digits.
+  env.AUDIENCE_ROOMS.stores.get(`pair:${first.pairingCode}`).set('pair',
+    { roomId: second.id, expiresAt: second.expiresAt });
+
+  await relayWorker.fetch(relayRequest(`/v1/rooms/${first.id}/close`,
+    { method: 'POST', body: { hostHash: HOST_HASH, code: first.pairingCode } }), env);
+
+  const survived = await relayWorker.fetch(relayRequest(`/v1/pairing/${first.pairingCode}`), env);
+  assert.equal((await survived.json()).roomId, second.id, 'closing one room must not shut another door');
 });
 
 test('only the host can replace a pairing code', async () => {
@@ -793,6 +818,22 @@ test('resolving a pairing code is rate limited so six digits cannot be walked', 
 
   assert.ok(![...env.AUDIENCE_ROOMS.stores.keys()].some((k) => k.includes('203.0.113.9') === false && k.startsWith('rl:') === false && k.includes('.')),
     'addresses only ever appear as a Durable Object name');
+});
+
+test('only wrong guesses spend the allowance, so one office does not throttle itself', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  const room = await (await createRoom(env)).json();
+
+  // Everyone in a meeting room shares one NAT address. Thirty of them joining
+  // must all get in — counting successes would have locked out the tenth.
+  for (let i = 0; i < 30; i += 1) {
+    const res = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
+    assert.equal(res.status, 200, `joiner ${i + 1} must not be throttled`);
+  }
+
+  // The budget is intact for the guesses it is meant to stop.
+  const wrong = await relayWorker.fetch(relayRequest('/v1/pairing/000001'), env);
+  assert.equal(wrong.status, 404);
 });
 
 test('an expired pairing code stops resolving', async () => {
