@@ -535,7 +535,11 @@ const AUDIENCE_HOST_SESSION_KEY = 'lc.audience.host-session.v1';
 // stopping the meeting to dig it out.
 let pairingTimer = null;
 
+// app.js is shared with the previous layout, which has none of these elements.
+// Anything added since has to tolerate their absence or it takes that page down
+// at load — as this did.
 function renderPairingChip() {
+  if (!el.pairingChip) return;
   const session = app.audience;
   const code = session?.pairingCode;
   if (!code || session.closed) {
@@ -564,7 +568,7 @@ function watchPairingCode() {
 // matching, while the room and everyone already inside carry on untouched.
 async function reissuePairingCode() {
   const session = app.audience;
-  if (!session?.id || !session.hostTokenHash) return;
+  if (!el.pairingChip || !session?.id || !session.hostTokenHash) return;
   el.pairingChip.disabled = true;
   try {
     const response = await fetch(
@@ -590,7 +594,7 @@ async function reissuePairingCode() {
   }
 }
 
-el.pairingChip.addEventListener('click', () => void reissuePairingCode());
+el.pairingChip?.addEventListener('click', () => void reissuePairingCode());
 
 // Joining someone else's room from this page. The handshake is the same ECDH
 // exchange the QR path performs invisibly, so it ends by handing over to
@@ -1018,6 +1022,7 @@ function dropTypedNote(id) {
 }
 
 function showTypedNote(segment, author) {
+  if (!el.typedDock) return;
   const node = document.createElement('article');
   node.className = 'typed-note';
   const tag = document.createElement('p');
