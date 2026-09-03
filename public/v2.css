@@ -704,8 +704,14 @@ body:not(.phone) .console > #controls { grid-column: 1; grid-row: 2; }
 body:not(.phone) .console > .console-action { grid-column: 2; grid-row: 2; }
 body:not(.phone) .console > .live-tools { grid-column: 1 / -1; grid-row: 3; }
 
-/* Nothing to meter and nothing to gate when the browser owns the microphone. */
-body[data-audio="none"] .signal-control { display: none; }
+/* The browser engine has a meter but no gate: no audio passes through this page
+   on its way to the recogniser, so there is no point at which a threshold could
+   drop any of it. The bar still moves, from a read-only tap on the microphone. */
+body[data-audio="monitor"] #gate,
+body[data-audio="monitor"] #gateValue { display: none; }
+/* And no bar at all until the tap has proved it can hear: see the comment on
+   startWebSpeechMeter. A bar stuck at zero is a false alarm, not a reading. */
+body[data-audio="monitor"]:not(.mic-metered) .signal-control { display: none; }
 
 .console-toggle {
   grid-column: 1 / -1;

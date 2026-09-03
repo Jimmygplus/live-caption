@@ -241,6 +241,8 @@ const el = {
   statusDot: $('statusDot'),
   statusText: $('statusText'),
   meterFill: $('meterFill'),
+  signalName: $('signalName'),
+  audioHint: $('audioHint'),
   gate: $('gate'),
   gateValue: $('gateValue'),
   audioLevelStatus: $('audioLevelStatus'),
@@ -509,14 +511,11 @@ async function loadConfig() {
   el.keysBtn.hidden = !isByok();
 
   if (isByok() && !keys.soniox) {
-    el.startBtn.disabled = true;
     const message = TRIAL_BROKER_URL
       ? '可使用推荐码免费体验 Soniox 30 分钟，或填入自己的密钥。音频均由浏览器直接发送给 Soniox。'
       : '先填入你自己的 Soniox 密钥即可开始。密钥只存在本机浏览器，不经过任何服务器。';
     showNotice(message, TRIAL_BROKER_URL ? '使用推荐码或密钥' : '填写密钥', () =>
       el.keysBtn.click());
-  } else {
-    el.startBtn.disabled = false;
   }
 
   onEngineChange();
@@ -1388,16 +1387,37 @@ async function refreshDevices() {
 
 // ---------------------------------------------------------------- UI wiring
 
+// Captured before anything rewrites it, so switching back to Soniox restores
+// the real text rather than a copy that has to be kept in sync by hand.
+const SONIOX_AUDIO_HINT = el.audioHint.innerHTML;
+
+// A missing Soniox key only blocks Soniox. The browser engine is labelled
+// 免密钥 and needs none, but the gate was decided once at load from the key
+// alone — so in bring-your-own-key mode the keyless engine could not be started
+// at all, and switching to it did nothing because nothing re-checked.
+function refreshStartAvailability() {
+  el.startBtn.disabled = app.engine === 'soniox' && isByok() && !keys.soniox;
+}
+
 function onEngineChange() {
   app.engine = el.engine.value;
   const isSoniox = app.engine === 'soniox';
 
-  // The browser engine holds the microphone itself: there is no stream for this
-  // page to meter and no point at which it could drop audio below a threshold.
-  // Showing a level meter and a gate slider next to it was not just useless, it
-  // was a lie — the meter sat at zero and the status stayed "未开始" while
-  // captions were being produced.
-  el.body.dataset.audio = isSoniox ? 'meter' : 'none';
+  // The browser engine opens the microphone itself, and it always opens the
+  // system default one: it never sees the device picked here and cannot capture
+  // tab audio at all. Leaving that whole group live meant a choice that silently
+  // did nothing. There is also no gate to set, because no audio passes through
+  // this page on the way to the recogniser — but the level meter still earns its
+  // place, and gets its own read-only stream, because "is the microphone even
+  // hearing me" is the first question when nothing appears.
+  el.body.dataset.audio = isSoniox ? 'gate' : 'monitor';
+  el.signalName.textContent = isSoniox ? '声音阈值' : '麦克风';
+  el.device.disabled = !isSoniox;
+  el.audioCheckBtn.disabled = !isSoniox;
+  refreshStartAvailability();
+  el.audioHint.innerHTML = isSoniox
+    ? SONIOX_AUDIO_HINT
+    : '浏览器识别自己开麦克风，只会听<strong>系统默认输入</strong>：上面选的设备和「标签页 / 系统声音」对它都无效。要给线上会议加字幕，请把识别引擎改成 Soniox。';
 
   // Two-way translation is a Soniox feature; the browser engine is single-language.
   // The browser engine is single-language, so auto two-way is Soniox-only.
@@ -2403,18 +2423,20 @@ async function startDisplayAudio() {
 }
 
 function setAudioSignalState(state, message = '') {
+  const monitor = el.body.dataset.audio === 'monitor';
   const copy = {
     idle: '未开始',
     waiting: '请说话测试',
     active: '有声音',
     gated: '声音低于阈值',
-    silent: '未检测到声音 · 请更换输入',
+    // Changing the input is not on offer when the engine ignores the setting.
+    silent: monitor ? '麦克风没有声音 · 检查系统输入音量与浏览器麦克风权限' : '未检测到声音 · 请更换输入',
   };
   el.audioLevelStatus.dataset.state = state;
   el.audioLevelStatus.textContent = message || copy[state] || copy.waiting;
   const device = io.audioDeviceLabel || el.device.selectedOptions[0]?.textContent || '当前输入';
   el.audioLevelStatus.title = `当前输入：${device}`;
-  el.device.classList.toggle('no-signal', state === 'silent');
+  el.device.classList.toggle('no-signal', !monitor && state === 'silent');
   el.device.title = state === 'silent'
     ? `当前输入：${device}。没有检测到声音，请说话测试、检查 macOS 输入音量，或改选一个具体麦克风。`
     : `当前输入：${device}`;
@@ -2993,6 +3015,7 @@ function startWebSpeech() {
   io.recognition = recognition;
 
   recognition.onresult = (event) => {
+    io.hasRecognized = true;
     noteRecognizerActivity();
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -3024,10 +3047,14 @@ function startWebSpeech() {
   recognition.onerror = (event) => {
     if (event.error === 'aborted') return;
     if (event.error === 'no-speech') {
-      // Chrome raises this after every pause, so it is only news when nothing
-      // has been heard at all this session — then it is the one clue on offer.
-      if (!io.hasDetectedSignal) {
-        setAudioSignalState('silent', '未听到语音 · 检查麦克风权限，或改用 Soniox');
+      // Raised after every pause, so it is only news when nothing has been
+      // recognised all session. The likeliest cause by far is the language:
+      // this engine listens for exactly one and is deaf to every other. Saying
+      // "改用 Soniox" first, as this used to, answered a question nobody asked.
+      if (!io.hasRecognized) {
+        const lang = el.sourceLang.selectedOptions[0]?.textContent || '所选语言';
+        setAudioSignalState('silent',
+          `没识别出语音 · 浏览器识别只听「${lang}」，说别的语言不会出字；也请检查麦克风权限`);
       }
       return;
     }
@@ -3046,11 +3073,68 @@ function startWebSpeech() {
 
   recognition.start();
   io.hasDetectedSignal = false;
+  io.hasRecognized = false;
   setAudioSignalState('waiting', '等待语音');
   setStatus('running', '浏览器识别中');
+  void startWebSpeechMeter();
+}
+
+// A read-only tap on the default microphone, purely so the level meter can
+// answer "is it hearing me". Opened after the recogniser is already running,
+// and every failure swallowed: a meter is a nicety, recognition is the job.
+//
+// The tap is not trusted until it has actually heard something. On a test rig
+// it returned a permanently silent stream while the recogniser held the device,
+// and a bar pinned to zero is worse than no bar — it reads as "your microphone
+// is dead" when the truth is "this page cannot hear what the recogniser hears".
+// So the meter only appears once it has real sound to show, and it never drives
+// the status text: in this mode the recogniser is the only witness worth
+// quoting about whether anything is being heard.
+async function startWebSpeechMeter() {
+  try {
+    const media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(media).connect(analyser);
+
+    const buffer = new Float32Array(analyser.fftSize);
+    io.monitor = { media, ctx, raf: 0 };
+    io.audioStartedAt = performance.now();
+
+    const tick = () => {
+      if (!io.monitor) return;
+      analyser.getFloatTimeDomainData(buffer);
+      let sum = 0;
+      let peak = 0;
+      for (const value of buffer) {
+        sum += value * value;
+        peak = Math.max(peak, Math.abs(value));
+      }
+      if (Math.sqrt(sum / buffer.length) >= AUDIO_SIGNAL_MIN_RMS) {
+        el.body.classList.add('mic-metered');
+      }
+      el.meterFill.style.width = `${Math.min(100, Math.round(peak * 140))}%`;
+      io.monitor.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {
+    /* No meter, then. The recogniser is unaffected. */
+  }
+}
+
+function stopWebSpeechMeter() {
+  if (!io.monitor) return;
+  cancelAnimationFrame(io.monitor.raf);
+  io.monitor.media.getTracks().forEach((track) => track.stop());
+  void io.monitor.ctx.close().catch(() => {});
+  io.monitor = null;
+  el.body.classList.remove('mic-metered');
+  el.meterFill.style.width = '0%';
 }
 
 function stopWebSpeech() {
+  stopWebSpeechMeter();
   if (!io.recognition) return;
   io.recognition.onend = null;
   try { io.recognition.stop(); } catch {}

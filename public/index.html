@@ -134,7 +134,7 @@
             <span class="ico" aria-hidden="true">🎙</span><span class="lbl">音频体检</span>
           </button>
         </div>
-        <p class="group-hint">
+        <p class="group-hint" id="audioHint">
           给线上会议加字幕就选「标签页 / 系统声音」，点开始后<strong>记得勾上「分享音频」</strong>。不需要虚拟声卡。
         </p>
       </fieldset>
@@ -276,7 +276,7 @@
   <span id="statusText" class="status-text">未连接</span>
 
   <label class="signal-control" title="音量条显示麦克风实际收到的声音；滑块决定低于哪个声音阈值时不送去识别">
-    <span class="signal-name">声音阈值</span>
+    <span class="signal-name" id="signalName">声音阈值</span>
     <span class="signal-track">
       <span class="meter" aria-hidden="true"><i id="meterFill"></i></span>
       <input id="gate" type="range" min="0" max="60" step="1" value="0"
