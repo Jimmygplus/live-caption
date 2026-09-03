@@ -578,13 +578,12 @@ test('relay expiry announces a permanent close before deleting room storage', as
 });
 
 test('participant page keeps speaking first and full captions available on demand', async () => {
-  const [html, css, inputScript, hostScript, joinHtml, joinScript] = await Promise.all([
+  const [html, css, inputScript, hostScript, home] = await Promise.all([
     readFile(new URL('../public/input.html', import.meta.url), 'utf8'),
     readFile(new URL('../public/input.css', import.meta.url), 'utf8'),
     readFile(new URL('../public/input.js', import.meta.url), 'utf8'),
     readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
-    readFile(new URL('../public/j.html', import.meta.url), 'utf8'),
-    readFile(new URL('../public/join.js', import.meta.url), 'utf8'),
+    readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   ]);
   assert.ok(html.indexOf('id="messageForm"') < html.indexOf('id="captionPanel"'));
   assert.match(html, /id="hostPresence"/);
@@ -595,11 +594,16 @@ test('participant page keeps speaking first and full captions available on deman
   assert.match(inputScript, /已排队，等待主持人恢复/);
   assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
   assert.doesNotMatch(hostScript, /localStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
-  assert.match(joinHtml, /安全短码加入/);
-  assert.match(joinHtml, /id="roomCode"/);
-  assert.match(joinScript, /createJoinKeyPair/);
-  assert.match(joinScript, /sessionStorage\.setItem\('lc\.audience\.room'/);
-  assert.doesNotMatch(joinScript, /localStorage\.setItem\('lc\.audience\.room'/);
+  // Joining by code used to live on its own page. It is on the home page now,
+  // because someone handed six digits opens the site, not a page that exists
+  // only to take a code — but the guarantees are unchanged.
+  assert.match(home, /id="joinCode"/, 'the join entry is visible on arrival');
+  assert.match(hostScript, /createJoinKeyPair/, 'the key exchange still happens in the browser');
+  assert.match(hostScript, /input\.html#r=/, 'it hands over on the same contract the QR path uses');
+  // The join secret is passed in a fragment, which never reaches a server, and
+  // must not be written anywhere that outlives the tab.
+  assert.doesNotMatch(hostScript, /localStorage\.setItem\([^)]*joinSecret/);
+  assert.doesNotMatch(hostScript, /localStorage\.setItem\('lc\.audience\.room'/);
 });
 
 test('host controls combine signal threshold, link font sizes and default to short captions', async () => {

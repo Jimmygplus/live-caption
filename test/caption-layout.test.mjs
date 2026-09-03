@@ -68,22 +68,13 @@ test('the shipped markup serves the whole element contract app.js depends on', a
 });
 
 test('sample codes shown to users match the formats actually accepted', async () => {
-  const j = await readFile(new URL('../public/j.html', import.meta.url), 'utf8');
-  const { isRoomCode, ROOM_CODE_LENGTH } = await import('../public/join-crypto.js');
   const { validTrialCode } = await import('../public/trial-code.js');
 
   // A placeholder is the only worked example most people ever see, so it drifts
-  // silently the moment a format changes — this one still read ABCDE-FGHIJ long
-  // after room codes became six characters, and I is not even in the alphabet.
-  const roomSample = j.match(/id="roomCode"[\s\S]*?placeholder="([^"]+)"/)?.[1];
-  assert.ok(roomSample, 'j.html must show a room code placeholder');
-  // Checked raw, with only the display hyphen removed. Asserting on
-  // normalizeRoomCode() would prove nothing: it truncates to ROOM_CODE_LENGTH,
-  // so any sample of six characters or more passes — the ten-character
-  // ABCDE-FGHIJ this test exists to catch included.
-  const bareRoom = roomSample.replaceAll('-', '');
-  assert.equal(bareRoom.length, ROOM_CODE_LENGTH, `room sample ${roomSample} is the wrong length`);
-  assert.equal(isRoomCode(bareRoom), true, `room sample ${roomSample} uses characters the alphabet excludes`);
+  // silently the moment a format changes.
+  const home = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const joinSample = home.match(/id="joinCode"[\s\S]*?placeholder="([^"]+)"/)?.[1] || '';
+  assert.match(joinSample, /6 位/, 'the join field must say how many digits');
 
   for (const file of ['index.html', 'v1.html']) {
     const html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
@@ -93,6 +84,7 @@ test('sample codes shown to users match the formats actually accepted', async ()
     assert.equal(validTrialCode(bare), true, `${file} placeholder ${bare} must be redeemable in shape`);
   }
 });
+
 
 test('session settings stay changeable while running, except during a trial', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -112,4 +104,20 @@ test('session settings stay changeable while running, except during a trial', as
     assert.match(app, new RegExp(`${select}[\\s\\S]{0,220}restartForSettingChange`), `${select} must reconnect`);
   }
   assert.match(app, /if \(!app\.running \|\| app\.restarting\) return;/, 'restarts must not interleave');
+});
+
+test('no code reaches for an element the lookup table no longer defines', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const start = app.indexOf('const el = {');
+  const table = app.slice(start, app.indexOf('};', start));
+  const defined = new Set([...table.matchAll(/^\s*([a-zA-Z0-9]+):/gm)].map((m) => m[1]));
+
+  // Removing a feature means removing its entry here and every use of it. Miss
+  // one and the page throws at load — which is how the approval buttons'
+  // dangling click delegation survived deleting the approval UI, silently
+  // killing every listener registered after it.
+  const orphans = [...new Set([...app.replace(table, '').matchAll(/\bel\.([a-zA-Z0-9]+)\b/g)]
+    .map((m) => m[1]))].filter((name) => !defined.has(name));
+
+  assert.deepEqual(orphans, [], 'el.<name> used without a matching entry');
 });

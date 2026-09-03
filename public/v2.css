@@ -706,6 +706,34 @@ body.console-collapsed .console-chevron { transform: rotate(-90deg); }
 }
 .menu-items button.danger { color: var(--danger); }
 
+/* ── Join bar ────────────────────────────────────────────────────────────── */
+
+.join-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(1020px, 100%);
+  margin: 0 auto 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-sm);
+  font-size: 13px;
+}
+.join-bar label { color: var(--muted); flex: none; }
+.join-bar input { flex: 0 1 190px; letter-spacing: .18em; font-variant-numeric: tabular-nums; }
+.join-bar .ghost { flex: none; }
+.join-status { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.join-status[data-state="error"] { color: var(--danger); }
+.join-status[data-state="busy"] { color: var(--accent); }
+
+/* A session in progress is not a moment to join someone else's. */
+body[data-state="running"] .join-bar,
+body[data-state="connecting"] .join-bar { display: none; }
+body.phone .join-bar { width: auto; margin: 0 16px 10px; flex-wrap: wrap; }
+body.theater .join-bar, body.pip .join-bar { display: none; }
+
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 
 .statusbar {

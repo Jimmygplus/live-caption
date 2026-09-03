@@ -23,7 +23,11 @@ This document is the durable handoff for the encrypted QR caption room. GitHub I
 6. Reconnecting QR clients receive at most 100 recent final ciphertext envelopes. Drafts are never replayed.
 7. Host clients send a heartbeat every 10 seconds. The relay marks the room `away` after 30 seconds without a heartbeat, while keeping encrypted participant messages queued for host recovery.
 8. A host refresh in the same tab restores the room capability from `sessionStorage`; the capability is never written to `localStorage`.
-9. A client that cannot scan opens `j.html`, enters the room code and sends only an ephemeral public key through the relay.
+9. A client that cannot scan opens the home page, enters the six-digit pairing
+   code and sends only an ephemeral public key through the relay. The host
+   auto-approves when the presented code matches the one it currently holds, so
+   re-issuing a code ejects everyone still holding the old one. The room's own
+   id never changes, and the relay never sees the caption key.
 10. The relay forwards the request to an authenticated host. Both browsers derive the same six-digit verification code from the participant public key.
 11. After the host confirms the codes match, it encrypts the join capability to that ephemeral key. The participant unwraps it in memory, saves it to tab-scoped `sessionStorage`, and navigates to `input.html` without placing the capability in the short URL.
 

@@ -77,6 +77,18 @@
 <!-- The console is one region that changes shape with body[data-state]: an
      expanded setup form while idle, a slim strip of live controls once a
      session is running. Same nodes throughout, so app.js never has to know. -->
+<!-- Two different people open this page: one to host, one because they were
+     told six digits. The join path has to be visible on arrival, not filed
+     behind a menu — but it stays a single line so it never competes with the
+     setup the host uses every time. -->
+<form id="joinBar" class="join-bar">
+  <label for="joinCode">加入会议</label>
+  <input id="joinCode" type="text" inputmode="numeric" autocomplete="one-time-code"
+    maxlength="7" pattern="[0-9 ]*" placeholder="输入 6 位配对码" aria-describedby="joinStatus" />
+  <button id="joinBtn" class="ghost" type="submit">加入</button>
+  <span id="joinStatus" class="join-status" role="status" aria-live="polite"></span>
+</form>
+
 <section class="console" aria-label="会话设置与控制">
 
   <!-- On a phone the sheet covers the button that opened it, so it needs a
@@ -392,11 +404,7 @@
         <p id="audienceShortHint" class="hint">参与者也可以先打开短地址首页，再输入房间码。屏幕会显示相同验证码，核对后由主持人批准加入。</p>
         <p id="audienceHint" class="hint"></p>
         <p id="audiencePrivacy" class="audience-private"></p>
-        <section id="audienceJoinRequests" class="audience-join-requests" hidden aria-labelledby="audienceJoinRequestsTitle">
-          <h3 id="audienceJoinRequestsTitle">短码加入请求</h3>
-          <p class="hint">请先与参与者核对六位验证码，再批准。加入密钥只在双方浏览器内加密传递。</p>
-          <ul id="audienceJoinRequestList"></ul>
-        </section>
+        
       </div>
     </div>
 
