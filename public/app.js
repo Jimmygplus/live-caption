@@ -2432,10 +2432,22 @@ function setAudioSignalState(state, message = '') {
     // Changing the input is not on offer when the engine ignores the setting.
     silent: monitor ? '麦克风没有声音 · 检查系统输入音量与浏览器麦克风权限' : '未检测到声音 · 请更换输入',
   };
-  el.audioLevelStatus.dataset.state = state;
-  el.audioLevelStatus.textContent = message || copy[state] || copy.waiting;
   const device = io.audioDeviceLabel || el.device.selectedOptions[0]?.textContent || '当前输入';
-  el.audioLevelStatus.title = `当前输入：${device}`;
+
+  // "External Microphone" is what macOS calls the 3.5mm jack, and it switches to
+  // it the moment anything is plugged in — including headphones with no
+  // microphone in them, which then hand every listener a perfectly silent
+  // stream while the built-in array sits bypassed. The device name was on
+  // screen the whole time and said exactly this; nobody could be expected to
+  // read it that way, so when there is no sound, spell it out.
+  const onJack = /external mic|外接麦克风|line[- ]?in/i.test(device);
+  el.audioLevelStatus.dataset.state = state;
+  el.audioLevelStatus.textContent = state === 'silent' && onJack
+    ? '没有声音 · 输入是耳机孔，内置麦克风被旁路 —— 拔掉耳机线，或到系统设置里改回内建麦克风'
+    : message || copy[state] || copy.waiting;
+  el.audioLevelStatus.title = onJack
+    ? `当前输入：${device}。这是耳机孔的输入线路，不是内置麦克风；插着不带麦的耳机时它完全没有声音。`
+    : `当前输入：${device}`;
   el.device.classList.toggle('no-signal', !monitor && state === 'silent');
   el.device.title = state === 'silent'
     ? `当前输入：${device}。没有检测到声音，请说话测试、检查 macOS 输入音量，或改选一个具体麦克风。`

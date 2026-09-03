@@ -174,3 +174,16 @@ test('the pairing code survives theatre mode, which is when it matters most', as
   assert.match(app, /rooms\/\$\{encodeURIComponent\(session\.id\)\}\/pairing/);
 });
 
+
+test('a silent jack input is named as one, not left as "no sound"', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+  // macOS switches the input source to the 3.5mm jack the moment anything is
+  // plugged in, headphones with no microphone included — every listener then
+  // gets a silent stream while the built-in array sits bypassed. The device
+  // name said so all along; the advice has to say it in words.
+  const fn = app.match(/function setAudioSignalState[\s\S]*?\n}/)?.[0] || '';
+  assert.match(fn, /external mic/i, 'the jack has to be recognised by name');
+  assert.match(fn, /耳机孔/, 'and called a headphone jack, not "an input"');
+  assert.match(fn, /state === 'silent' && onJack/, 'only when there is actually no sound');
+});
