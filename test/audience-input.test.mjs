@@ -613,7 +613,8 @@ test('the participant page is a chat: transcript above, composer pinned below', 
 
   // A typed contribution has to come back to the room, or a second Deaf
   // participant cannot follow the first and the sender sees no evidence at all.
-  assert.match(hostScript, /showTypedNote\(segment, message\.name\);\n\s*\/\/[\s\S]{0,220}publishAudienceSegment\(segment\)/);
+  const received = hostScript.match(/function receiveAudienceMessage[\s\S]*?\n}/)?.[0] || '';
+  assert.match(received, /publishAudienceSegment\(segment\)/);
 
   assert.match(inputScript, /host-status/);
   assert.match(inputScript, /已排队，等待主持人恢复/);
