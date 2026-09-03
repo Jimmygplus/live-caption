@@ -706,6 +706,49 @@ body.console-collapsed .console-chevron { transform: rotate(-90deg); }
 }
 .menu-items button.danger { color: var(--danger); }
 
+/* ── Pairing code ────────────────────────────────────────────────────────── */
+
+.pairing-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-inline-start: 14px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--sh-sm);
+  cursor: pointer;
+}
+.pairing-chip[hidden] { display: none; }
+.pairing-label { font-size: 11px; color: var(--dim); }
+#pairingCode { font-size: 17px; letter-spacing: .16em; }
+#pairingCountdown { font-size: 11px; color: var(--dim); }
+.pairing-chip[data-state="expired"] { border-color: var(--warn); }
+.pairing-chip[data-state="expired"] #pairingCountdown { color: var(--warn); }
+
+/* Theatre mode hides the bar this normally sits in, but that is the projected,
+   full-room case — the one where a latecomer most needs to read it. It stays,
+   dimmed until looked at so it never competes with the captions. */
+body.theater .pairing-chip {
+  position: fixed;
+  pointer-events: auto;
+  inset-block-start: 14px;
+  inset-inline-start: 14px;
+  z-index: 40;
+  margin: 0;
+  opacity: .35;
+  transition: opacity .15s;
+}
+body.theater .pairing-chip:hover,
+body.theater .pairing-chip:focus-visible { opacity: 1; }
+body.pip .pairing-chip { display: none; }
+body.phone .pairing-chip { margin-inline-start: 0; padding: 6px 10px; }
+body.phone .pairing-label { display: none; }
+
 /* ── Typed contributions ─────────────────────────────────────────────────── */
 
 /* A fixed place on the screen, so the room learns where to look once and does
@@ -978,12 +1021,35 @@ dialog.sheet form { display: flex; flex-direction: column; max-height: 88vh; }
 
 /* ── Theater, peek, PiP ──────────────────────────────────────────────────── */
 
-body.theater .topbar,
 body.theater .console,
 body.theater .statusbar { display: none; }
 
+/* The bar itself has to stay in the render tree, because a fixed-position child
+   of a display:none parent is not rendered either — and the pairing code is the
+   one thing that must survive theatre mode. Everything else in it goes. */
+body.theater .topbar {
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+body.theater .topbar > *:not(.pairing-chip) { display: none; }
+
+body.theater.peek .topbar > * { display: revert; }
+/* Peeking brings the whole bar back, so the chip rejoins it rather than staying
+   pinned and dimmed in a corner of a bar that is now fully visible. */
+body.theater.peek .pairing-chip {
+  position: static;
+  opacity: 1;
+  margin-inline-start: 14px;
+}
 body.theater.peek .topbar {
   display: flex;
+  padding: 11px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  pointer-events: auto;
   position: fixed;
   inset-block-start: 0;
   inset-inline: 0;

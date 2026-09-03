@@ -147,3 +147,26 @@ test('picture-in-picture sizes text for its own window, keeping the ratio', asyn
   // The size is no longer written to both roots at once; only the theme is.
   assert.doesNotMatch(app, /for \(const root of styleRoots\(\)\) root\.style\.setProperty/);
 });
+
+test('the pairing code survives theatre mode, which is when it matters most', async () => {
+  const css = await readFile(new URL('../public/v2.css', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+  assert.match(html, /id="pairingChip"/);
+
+  // The chip lives in the top bar, and theatre mode hides that bar. A
+  // fixed-position child of a display:none parent is not rendered either, so
+  // the bar has to stay in the tree with everything else in it hidden instead.
+  const theatre = css.match(/body\.theater \.topbar \{[\s\S]*?\n\}/)?.[0] || '';
+  assert.match(theatre, /display: block/, 'the bar itself must keep rendering');
+  assert.doesNotMatch(css, /body\.theater \.topbar,/, 'it must not be display:none any more');
+  assert.match(css, /body\.theater \.topbar > \*:not\(\.pairing-chip\) \{ display: none; \}/);
+
+  // Projected to a room is exactly when a latecomer needs to read it.
+  assert.match(css, /body\.theater \.pairing-chip \{[\s\S]*?position: fixed/);
+
+  // Re-issuing is the eject button, so it has to be reachable from the chip.
+  assert.match(app, /function reissuePairingCode/);
+  assert.match(app, /rooms\/\$\{encodeURIComponent\(session\.id\)\}\/pairing/);
+});

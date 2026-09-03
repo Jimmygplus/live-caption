@@ -208,6 +208,9 @@ const el = {
   noticeAction: $('noticeAction'),
   noticeDismiss: $('noticeDismiss'),
   pipBtn: $('pipBtn'),
+  pairingChip: $('pairingChip'),
+  pairingCode: $('pairingCode'),
+  pairingCountdown: $('pairingCountdown'),
   typedDock: $('typedDock'),
   typedSoundBtn: $('typedSoundBtn'),
   lockBtn: $('lockBtn'),
@@ -527,6 +530,68 @@ async function loadConfig() {
 
 const AUDIENCE_HOST_SESSION_KEY = 'lc.audience.host-session.v1';
 
+// The pairing code is on screen for the whole session rather than behind the
+// dialog that created it. A latecomer should be able to join without the host
+// stopping the meeting to dig it out.
+let pairingTimer = null;
+
+function renderPairingChip() {
+  const session = app.audience;
+  const code = session?.pairingCode;
+  if (!code || session.closed) {
+    clearInterval(pairingTimer);
+    pairingTimer = null;
+    el.pairingChip.hidden = true;
+    return;
+  }
+  el.pairingChip.hidden = false;
+  el.pairingCode.textContent = code;
+
+  const left = Math.max(0, Math.round(((session.pairingExpiresAt || 0) - Date.now()) / 1000));
+  el.pairingChip.dataset.state = left > 0 ? 'live' : 'expired';
+  el.pairingCountdown.textContent = left > 0
+    ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
+    : '已过期 · 点击更新';
+}
+
+function watchPairingCode() {
+  clearInterval(pairingTimer);
+  renderPairingChip();
+  pairingTimer = setInterval(renderPairingChip, 1000);
+}
+
+// Re-issuing is also the eject button: whoever holds the previous code stops
+// matching, while the room and everyone already inside carry on untouched.
+async function reissuePairingCode() {
+  const session = app.audience;
+  if (!session?.id || !session.hostTokenHash) return;
+  el.pairingChip.disabled = true;
+  try {
+    const response = await fetch(
+      `${session.relayUrl.replace(/\/$/, '')}/v1/rooms/${encodeURIComponent(session.id)}/pairing`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hostHash: session.hostTokenHash }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || '无法更新配对码。');
+    session.pairingCode = body.pairingCode;
+    session.pairingExpiresAt = body.pairingExpiresAt;
+    saveAudienceHostSession(session);
+    renderPairingChip();
+    if (el.audienceDialog.open) showAudienceSession(session);
+    showNotice(`配对码已更新为 ${body.pairingCode}，之前的码立即失效。`);
+  } catch (error) {
+    setError(error.message || '无法更新配对码。');
+  } finally {
+    el.pairingChip.disabled = false;
+  }
+}
+
+el.pairingChip.addEventListener('click', () => void reissuePairingCode());
+
 // Joining someone else's room from this page. The handshake is the same ECDH
 // exchange the QR path performs invisibly, so it ends by handing over to
 // input.html through exactly the same contract — the audience page needs no
@@ -652,6 +717,7 @@ function saveAudienceHostSession(session) {
 }
 
 function clearAudienceHostSession() {
+  renderPairingChip();
   sessionStorage.removeItem(AUDIENCE_HOST_SESSION_KEY);
 }
 
@@ -672,6 +738,7 @@ async function restoreAudienceHostSession() {
   }
   const session = makeRelayAudienceSession(saved);
   app.audience = session;
+  watchPairingCode();
   try {
     await connectRelayHost(session, true);
     showAudienceSession(session);
@@ -1207,6 +1274,7 @@ async function createAudienceSession() {
         createdAt: Date.now(),
       });
       app.audience = session;
+      watchPairingCode();
       await connectRelayHost(session, true);
       saveAudienceHostSession(session);
       showAudienceSession(session);
