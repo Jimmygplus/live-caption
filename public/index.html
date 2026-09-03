@@ -72,6 +72,11 @@
   </div>
 </main>
 
+<!-- Typed contributions get their own strip rather than scrolling past in the
+     caption stream. A room looking at this screen needs to know a participant
+     just said something, and needs it to stay put long enough to be read. -->
+<section id="typedDock" class="typed-dock" aria-live="polite" aria-label="现场文字发言" hidden></section>
+
 <div id="sheetScrim" class="scrim" hidden></div>
 
 <!-- The console is one region that changes shape with body[data-state]: an
@@ -215,6 +220,10 @@
           <circle cx="12" cy="12" r="8.5"></circle>
           <path d="M12 7.5v5l3.5 2"></path>
         </svg><span class="lbl">时间</span>
+      </button>
+      <button id="typedSoundBtn" class="ghost" type="button" aria-pressed="true"
+        title="有人用文字发言时播放提示音：屏幕上的变化只对正在看屏幕的人有效">
+        <span class="ico" aria-hidden="true">🔔</span><span class="lbl">提示音</span>
       </button>
       <button id="pipBtn" class="ghost" type="button" hidden title="浮窗字幕：独立小窗口，置顶在其他应用之上">
         <span class="ico" aria-hidden="true">⧉</span><span class="lbl">浮窗</span>

@@ -706,6 +706,57 @@ body.console-collapsed .console-chevron { transform: rotate(-90deg); }
 }
 .menu-items button.danger { color: var(--danger); }
 
+/* ── Typed contributions ─────────────────────────────────────────────────── */
+
+/* A fixed place on the screen, so the room learns where to look once and does
+   not have to hunt. Absent entirely when nobody has typed. */
+.typed-dock {
+  display: grid;
+  gap: 8px;
+  padding: 12px clamp(16px, 5vw, 72px);
+  background: var(--bg);
+  border-top: 1px solid var(--border-soft);
+}
+.typed-dock[hidden] { display: none; }
+
+.typed-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  border: 1px solid var(--warn);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-md);
+  animation: typed-in .22s cubic-bezier(.22, .61, .36, 1);
+}
+
+.typed-tag {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  color: var(--warn);
+}
+
+/* Deliberately not the caption typography: no speaker rail, a bubble instead of
+   a flush block. Someone glancing up should see at once that this was typed by
+   a person in the room, not transcribed from speech. */
+.typed-text {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 30px);
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--text);
+  text-wrap: pretty;
+}
+.typed-trans { margin: 0; font-size: clamp(15px, 1.5vw, 21px); line-height: 1.4; color: var(--muted); }
+.typed-trans:empty { display: none; }
+
+@keyframes typed-in { from { opacity: 0; transform: translateY(10px); } }
+
+body.pip .typed-dock { display: none; }
+body.phone .typed-dock { padding: 10px 16px; }
+body.phone .typed-text { font-size: 19px; }
+
 /* ── Join bar ────────────────────────────────────────────────────────────── */
 
 .join-bar {
@@ -1089,7 +1140,7 @@ summary:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .segment, .segment-edit { animation: none; transition: none; }
+  .segment, .segment-edit, .typed-note { animation: none; transition: none; }
   main#stage { scroll-behavior: auto; }
   body[data-view="ticker"] #captions li,
   body[data-view="ticker"] #live,
