@@ -695,6 +695,18 @@ body.phone.console-collapsed .setup { display: none; }
 body[data-state="running"] .live-tools,
 body[data-state="connecting"] .live-tools { display: flex; }
 
+/* The console is a two-column grid: settings on the left, start/stop on the
+   right. The live tools were auto-placed, which landed them in column two the
+   moment a session began — so the button they displaced dropped to a row of
+   its own at the far left. They get a full-width row of their own instead. */
+body:not(.phone) .console > .console-toggle { grid-row: 1; }
+body:not(.phone) .console > #controls { grid-column: 1; grid-row: 2; }
+body:not(.phone) .console > .console-action { grid-column: 2; grid-row: 2; }
+body:not(.phone) .console > .live-tools { grid-column: 1 / -1; grid-row: 3; }
+
+/* Nothing to meter and nothing to gate when the browser owns the microphone. */
+body[data-audio="none"] .signal-control { display: none; }
+
 .console-toggle {
   grid-column: 1 / -1;
   display: flex;

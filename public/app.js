@@ -1392,6 +1392,13 @@ function onEngineChange() {
   app.engine = el.engine.value;
   const isSoniox = app.engine === 'soniox';
 
+  // The browser engine holds the microphone itself: there is no stream for this
+  // page to meter and no point at which it could drop audio below a threshold.
+  // Showing a level meter and a gate slider next to it was not just useless, it
+  // was a lie — the meter sat at zero and the status stayed "未开始" while
+  // captions were being produced.
+  el.body.dataset.audio = isSoniox ? 'meter' : 'none';
+
   // Two-way translation is a Soniox feature; the browser engine is single-language.
   // The browser engine is single-language, so auto two-way is Soniox-only.
   el.mode.disabled = !isSoniox;
@@ -2420,9 +2427,10 @@ function noteRecognizerActivity() {
   if (io.hasDetectedSignal) return;
   io.hasDetectedSignal = true;
   clearTimeout(io.silenceTimer);
-  // Tokens are stronger evidence than the meter, so say so plainly rather than
-  // falling back to "please test your microphone" while captions are running.
-  if (el.audioLevelStatus.dataset.state === 'silent') setAudioSignalState('active');
+  // Words coming back are the strongest evidence there is that the microphone
+  // works — stronger than any meter — so this states it outright instead of
+  // leaving whatever the meter last guessed standing.
+  setAudioSignalState('active');
 }
 
 function beginAudioSignalCheck(track) {
@@ -2985,6 +2993,7 @@ function startWebSpeech() {
   io.recognition = recognition;
 
   recognition.onresult = (event) => {
+    noteRecognizerActivity();
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
@@ -3013,7 +3022,15 @@ function startWebSpeech() {
   };
 
   recognition.onerror = (event) => {
-    if (event.error === 'no-speech' || event.error === 'aborted') return;
+    if (event.error === 'aborted') return;
+    if (event.error === 'no-speech') {
+      // Chrome raises this after every pause, so it is only news when nothing
+      // has been heard at all this session — then it is the one clue on offer.
+      if (!io.hasDetectedSignal) {
+        setAudioSignalState('silent', '未听到语音 · 检查麦克风权限，或改用 Soniox');
+      }
+      return;
+    }
     setError(`识别错误：${event.error}`);
   };
 
@@ -3028,6 +3045,8 @@ function startWebSpeech() {
   };
 
   recognition.start();
+  io.hasDetectedSignal = false;
+  setAudioSignalState('waiting', '等待语音');
   setStatus('running', '浏览器识别中');
 }
 
@@ -3150,6 +3169,10 @@ function setTranslatorStatus(id) {
 
 async function start() {
   setError('');
+  // The restore offer belongs to the previous session's transcript. Left up, it
+  // sits over a session that has already started, still offering to bring back
+  // something else.
+  hideNotice();
   resetStream();
   app.intentionalClose = false;
   app.reconnectAttempt = 0;
@@ -3179,6 +3202,9 @@ async function start() {
       startWebSpeech();
     }
     el.placeholder.hidden = app.segments.length > 0;
+    // Until the first line lands this is the only thing on screen, so it should
+    // say what is happening now rather than describe the settings that got here.
+    if (!el.placeholder.hidden) el.placeholderHint.textContent = '正在聆听……第一句话出现后会显示在这里。';
   } catch (err) {
     setError(err.message || String(err));
     setStatus('error', '启动失败');
