@@ -1705,11 +1705,38 @@ function checkLanguageMismatch() {
   hideNotice();
 }
 
-function setControlsDisabled(disabled) {
-  for (const control of [el.engine, el.sourceLang, el.targetLang, el.device, el.audioCheckBtn]) {
-    control.disabled = disabled;
+// A session is exactly when you discover the microphone or the language is
+// wrong, so changing these mid-session restarts the stream instead of being
+// forbidden. The one case that still has to be locked is a trial: the Soniox
+// key is single-use, so restarting would spend a second 30-minute redemption
+// and another slot of the daily allowance — silently, on a stray click.
+function setControlsDisabled(running) {
+  const locked = running && app.trial.inSession;
+  for (const control of [el.engine, el.sourceLang, el.targetLang, el.device]) {
+    control.disabled = locked;
+    control.title = locked
+      ? '推荐码体验期间不能中途更改：临时密钥是一次性的，改动需要再兑换一次。'
+      : '';
   }
-  el.mode.disabled = disabled || app.engine !== 'soniox';
+  // The check grabs the microphone for itself, so it cannot run against a live
+  // stream whatever the engine is.
+  el.audioCheckBtn.disabled = running;
+  el.mode.disabled = locked || app.engine !== 'soniox';
+}
+
+// Changing a setting mid-session means reconnecting. Guarded because stop() and
+// start() are both async: a second change arriving mid-restart would interleave
+// two teardowns over one stream.
+async function restartForSettingChange() {
+  if (!app.running || app.restarting) return;
+  app.restarting = true;
+  try {
+    await restartWith(() => {});
+  } catch (error) {
+    setError(error?.message || '重新连接失败，请点「开始」重试。');
+  } finally {
+    app.restarting = false;
+  }
 }
 
 function tickClock() {
@@ -3212,6 +3239,7 @@ el.device.addEventListener('change', () => {
   }
   else localStorage.setItem('lc.source', el.device.value);
   if (!app.running) setAudioSignalState('idle');
+  void restartForSettingChange();
 });
 
 el.gate.addEventListener('input', applyGate);
@@ -3421,8 +3449,11 @@ el.audienceEnd.addEventListener('click', () => {
   }
 });
 
-el.engine.addEventListener('change', onEngineChange);
-el.mode.addEventListener('change', applyModeLabels);
+el.engine.addEventListener('change', () => { onEngineChange(); void restartForSettingChange(); });
+el.mode.addEventListener('change', () => { applyModeLabels(); void restartForSettingChange(); });
+for (const select of [el.sourceLang, el.targetLang]) {
+  select.addEventListener('change', () => void restartForSettingChange());
+}
 
 el.translator.addEventListener('change', () => {
   localStorage.setItem('lc.translator', el.translator.value);

@@ -93,3 +93,23 @@ test('sample codes shown to users match the formats actually accepted', async ()
     assert.equal(validTrialCode(bare), true, `${file} placeholder ${bare} must be redeemable in shape`);
   }
 });
+
+test('session settings stay changeable while running, except during a trial', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+  // Locking these during a session meant stopping and starting over to fix a
+  // wrong microphone — which is exactly when you find out it is wrong.
+  const lock = app.match(/function setControlsDisabled[\s\S]*?\n}/)?.[0] || '';
+  assert.match(lock, /app\.trial\.inSession/, 'only a trial has to stay locked');
+  assert.doesNotMatch(lock, /control\.disabled = disabled/, 'no blanket lock while running');
+
+  // A trial key is single-use: restarting spends another redemption and another
+  // slot of the daily allowance, so that case must remain explicit.
+  assert.match(lock, /推荐码体验期间/);
+
+  // Every setting that needs a reconnect has to ask for one.
+  for (const select of ['device', 'engine', 'mode', 'sourceLang', 'targetLang']) {
+    assert.match(app, new RegExp(`${select}[\\s\\S]{0,220}restartForSettingChange`), `${select} must reconnect`);
+  }
+  assert.match(app, /if \(!app\.running \|\| app\.restarting\) return;/, 'restarts must not interleave');
+});
