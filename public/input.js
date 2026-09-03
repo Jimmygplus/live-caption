@@ -51,6 +51,33 @@ let sending = false;
 let expiresAt = Number(savedRelayRoom.expiresAt) || 0;
 let expiryTimer = null;
 const captions = new Map();
+
+// A room reads a screen, it does not read essays: 200 characters is about as
+// much as anyone will take in before the next speaker moves on.
+const MESSAGE_LIMIT = 200;
+
+// The host rebuilds a typed caption from its text, so the message id does not
+// survive the round trip and a sender cannot match on it. Matching on text I
+// personally sent in the last minute is enough, and each entry is consumed on
+// the first match so an identical line from someone else cannot also claim it.
+const MINE_TTL_MS = 60_000;
+const mine = [];
+function rememberMine(text) {
+  const now = Date.now();
+  mine.push({ text, at: now });
+  while (mine.length && now - mine[0].at > MINE_TTL_MS) mine.shift();
+}
+function claimMine(text) {
+  const index = mine.findIndex((entry) => entry.text === text);
+  if (index === -1) return false;
+  mine.splice(index, 1);
+  return true;
+}
+
+function autoGrowMessage() {
+  messageInput.style.height = 'auto';
+  messageInput.style.height = `${messageInput.scrollHeight}px`;
+}
 const pendingKey = `lc.audience.pending.${room}`;
 let savedPending = [];
 try { savedPending = JSON.parse(sessionStorage.getItem(pendingKey) || '[]'); } catch {}
@@ -183,6 +210,9 @@ function renderCaption(payload) {
     : payload.speaker ? `🎙 ${payload.speaker}` : '🎙 现场';
   node.dataset.state = payload.state;
   node.dataset.source = payload.source;
+  if (payload.source === 'typed' && !node.dataset.mine && claimMine(payload.orig)) {
+    node.dataset.mine = 'true';
+  }
   node.querySelector('.caption-meta').textContent = `${captionTime(payload.startMs)} · ${identity}${payload.state === 'draft' ? ' · 正在说' : ''}`;
   node.querySelector('.caption-original').textContent = payload.orig;
   node.querySelector('.caption-translation').textContent = payload.trans;
@@ -330,7 +360,8 @@ captionToggle.addEventListener('click', () => {
 });
 
 messageInput.addEventListener('input', () => {
-  count.textContent = `${messageInput.value.length} / 500`;
+  count.textContent = `${messageInput.value.length} / ${MESSAGE_LIMIT}`;
+  autoGrowMessage();
 });
 
 nameInput.addEventListener('change', () => {
@@ -342,7 +373,12 @@ languageInput.addEventListener('change', () => {
 });
 
 messageInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) form.requestSubmit();
+  // Enter sends. A room is not waiting while someone composes a paragraph, and
+  // every extra keystroke is one more thing to explain to a first-time user.
+  if (event.key !== 'Enter' || event.isComposing) return;
+  if (event.shiftKey) return;           // deliberate newline
+  event.preventDefault();
+  form.requestSubmit();
 });
 
 form.addEventListener('submit', async (event) => {
@@ -388,8 +424,12 @@ form.addEventListener('submit', async (event) => {
 
     localStorage.setItem('lc.audience.name', item.name);
     localStorage.setItem('lc.audience.language', item.language);
+    // Remembered before the round trip, so the copy the host broadcasts back
+    // can be recognised as this person's own line and mirrored to the right.
+    rememberMine(item.text);
     messageInput.value = '';
-    count.textContent = '0 / 500';
+    count.textContent = `0 / ${MESSAGE_LIMIT}`;
+    autoGrowMessage();
     messageInput.focus();
   } catch (error) {
     setStatus(error.message, 'error');

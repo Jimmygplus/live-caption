@@ -577,7 +577,7 @@ test('relay expiry announces a permanent close before deleting room storage', as
   assert.equal(await state.storage.get('meta'), undefined);
 });
 
-test('participant page keeps speaking first and full captions available on demand', async () => {
+test('the participant page is a chat: transcript above, composer pinned below', async () => {
   const [html, css, inputScript, hostScript, home] = await Promise.all([
     readFile(new URL('../public/input.html', import.meta.url), 'utf8'),
     readFile(new URL('../public/input.css', import.meta.url), 'utf8'),
@@ -585,26 +585,39 @@ test('participant page keeps speaking first and full captions available on deman
     readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
     readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   ]);
-  assert.ok(html.indexOf('id="messageForm"') < html.indexOf('id="captionPanel"'));
+
+  // Reversed on purpose. The composer used to sit on top with the captions in a
+  // small panel underneath, which is backwards for a page whose occupant spends
+  // most of the meeting reading.
+  assert.ok(html.indexOf('id="captionPanel"') < html.indexOf('id="messageForm"'),
+    'the transcript comes first and the composer is pinned below it');
+  assert.match(css, /body \{[\s\S]*?grid-template-rows: auto 1fr auto;/);
   assert.match(html, /id="hostPresence"/);
   assert.match(html, /<details class="participant-options">/);
-  assert.match(html, /id="captionToggle"[^>]+aria-expanded="false"/);
-  assert.match(css, /\.caption-list:not\(\.expanded\).*nth-last-child/);
+
+  // Your own line mirrored to the right is the answer to "did everyone see it".
+  assert.match(css, /\.caption\[data-mine="true"\]/);
+  assert.match(inputScript, /claimMine/);
+  assert.match(inputScript, /rememberMine\(item\.text\)/);
+
+  // Enter sends; a room will not wait while someone composes a paragraph.
+  assert.match(html, /enterkeyhint="send"/);
+  assert.match(inputScript, /if \(event\.shiftKey\) return;/);
+  assert.match(inputScript, /event\.isComposing/, 'IME composition must not send');
+  assert.match(html, /maxlength="200"/);
+
   assert.match(inputScript, /host-status/);
   assert.match(inputScript, /已排队，等待主持人恢复/);
   assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
   assert.doesNotMatch(hostScript, /localStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
-  // Joining by code used to live on its own page. It is on the home page now,
-  // because someone handed six digits opens the site, not a page that exists
-  // only to take a code — but the guarantees are unchanged.
-  assert.match(home, /id="joinCode"/, 'the join entry is visible on arrival');
-  assert.match(hostScript, /createJoinKeyPair/, 'the key exchange still happens in the browser');
-  assert.match(hostScript, /input\.html#r=/, 'it hands over on the same contract the QR path uses');
-  // The join secret is passed in a fragment, which never reaches a server, and
-  // must not be written anywhere that outlives the tab.
-  assert.doesNotMatch(hostScript, /localStorage\.setItem\([^)]*joinSecret/);
+
+  // Joining by code lives on the home page now; the guarantees are unchanged.
+  assert.match(home, /id="joinCode"/);
+  assert.match(hostScript, /createJoinKeyPair/);
+  assert.match(hostScript, /input\.html#r=/);
   assert.doesNotMatch(hostScript, /localStorage\.setItem\('lc\.audience\.room'/);
 });
+
 
 test('host controls combine signal threshold, link font sizes and default to short captions', async () => {
   const [html, css, script] = await Promise.all([

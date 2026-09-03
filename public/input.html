@@ -7,79 +7,68 @@
   <link rel="stylesheet" href="./input.css" />
 </head>
 <body>
-  <main>
-    <header class="app-header">
-      <span class="mark" aria-hidden="true">◉</span>
-      <div>
-        <h1>字幕直播间</h1>
-        <p>看懂现场，也让现场听见你。</p>
-        <p lang="en">Follow the room and have your say.</p>
-      </div>
-    </header>
-
-    <section id="hostPresence" class="presence" data-state="connecting" aria-live="polite">
-      <span class="presence-dot" aria-hidden="true"></span>
-      <div>
+  <!-- A chat, because that is what it is: the room's speech arrives on the left,
+       what you type goes to the big screen and comes back on the right. Seeing
+       your own line land in the same timeline is the only honest answer to
+       "did everyone see that?". -->
+  <header class="app-header">
+    <span class="mark" aria-hidden="true">◉</span>
+    <div class="app-title">
+      <h1>字幕直播间</h1>
+      <section id="hostPresence" class="presence" data-state="connecting" aria-live="polite">
+        <span class="presence-dot" aria-hidden="true"></span>
         <strong id="presenceTitle">正在连接现场</strong>
         <span id="presenceDetail">连接后即可发送文字发言</span>
-      </div>
-    </section>
-
-    <form id="messageForm" class="composer">
-      <div class="composer-heading">
-        <div>
-          <p class="eyebrow">文字发言</p>
-          <h2>你想让现场知道什么？</h2>
-        </div>
-        <span class="secure-badge">端到端加密</span>
-      </div>
-
-      <details class="participant-options">
-        <summary>名称与输入语言 <span>选填</span></summary>
-        <div class="option-fields">
-          <label for="name">显示名称</label>
-          <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
-
-          <label for="language">输入语言</label>
-          <select id="language">
-            <option value="auto" selected>自动判断</option>
-            <option value="zh">中文</option>
-            <option value="en">English</option>
-          </select>
-        </div>
-      </details>
-
-      <label class="sr-only" for="message">想表达的内容</label>
-      <textarea id="message" maxlength="500" rows="5" required autofocus
-        placeholder="输入你想说的话……"></textarea>
-      <div class="between">
-        <span id="count">0 / 500</span>
-        <span class="shortcut">Ctrl / ⌘ + Enter 发送</span>
-      </div>
-
-      <button id="sendBtn" type="submit">发送到现场</button>
-      <p id="status" role="status" aria-live="polite">正在连接安全通道……</p>
-      <section id="lastSent" aria-live="polite" hidden>
-        <strong id="lastState">正在送达</strong>
-        <p id="lastText"></p>
       </section>
-    </form>
+    </div>
+    <span id="captionState" class="caption-state">等待字幕</span>
+  </header>
 
-    <section id="captionPanel" class="caption-panel" aria-labelledby="captionTitle">
-      <div class="caption-heading">
-        <div>
-          <p class="eyebrow">现场上下文</p>
-          <h2 id="captionTitle">最近字幕</h2>
-        </div>
-        <span id="captionState">等待字幕</span>
-      </div>
-      <p id="captionEmpty" class="caption-empty">主持人开始后，最近字幕会显示在这里。</p>
-      <ol id="captionList" class="caption-list" aria-live="polite" aria-relevant="additions text"></ol>
-      <button id="captionToggle" class="caption-toggle" type="button" aria-expanded="false" aria-controls="captionList" hidden>
-        查看全部字幕
-      </button>
-    </section>
+  <main id="captionPanel" class="caption-panel" aria-labelledby="captionTitle">
+    <h2 id="captionTitle" class="sr-only">现场字幕与你的发言</h2>
+    <p id="captionEmpty" class="caption-empty">主持人开始后，现场字幕会出现在这里。</p>
+    <ol id="captionList" class="caption-list" aria-live="polite" aria-relevant="additions text"></ol>
+    <button id="captionToggle" class="caption-toggle" type="button" aria-expanded="true" aria-controls="captionList" hidden>
+      查看全部字幕
+    </button>
   </main>
+
+  <form id="messageForm" class="composer">
+    <details class="participant-options">
+      <summary>名称与输入语言 <span>选填</span></summary>
+      <div class="option-fields">
+        <label for="name">显示名称</label>
+        <input id="name" maxlength="30" autocomplete="name" placeholder="例如：Jimmy" />
+
+        <label for="language">输入语言</label>
+        <select id="language">
+          <option value="auto" selected>自动判断</option>
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </details>
+
+    <section id="lastSent" class="last-sent" aria-live="polite" hidden>
+      <strong id="lastState">正在送达</strong>
+      <p id="lastText"></p>
+    </section>
+
+    <div class="composer-row">
+      <label class="sr-only" for="message">想表达的内容</label>
+      <!-- One line that grows: Enter sends, so a five-row box would be inviting
+           a paragraph the return key is about to cut short. -->
+      <textarea id="message" maxlength="200" rows="1" required autofocus
+        enterkeyhint="send" placeholder="输入后按回车发送……"></textarea>
+      <button id="sendBtn" type="submit" aria-label="发送到现场">发送</button>
+    </div>
+
+    <div class="composer-foot">
+      <span id="status" role="status" aria-live="polite">正在连接安全通道……</span>
+      <span id="count">0 / 200</span>
+    </div>
+  </form>
+
   <script type="module" src="./input.js"></script>
 </body>
 </html>
