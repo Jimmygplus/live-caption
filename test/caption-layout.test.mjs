@@ -48,7 +48,13 @@ test('the shipped markup serves the whole element contract app.js depends on', a
 
   // app.js is shared verbatim between layouts, so a layout that omits one id
   // fails at the first $() call rather than anywhere near the cause.
-  const required = [...new Set([...app.matchAll(/\$\('([a-zA-Z0-9]+)'\)/g)].map((m) => m[1]))];
+  // Both access paths count. Scanning only $() left a hole: #statusBar is
+  // reached through document.getElementById, so dropping it from the markup
+  // passed the contract test and broke restoring the stage from picture-in-picture.
+  const required = [...new Set([
+    ...[...app.matchAll(/\$\('([a-zA-Z0-9]+)'\)/g)].map((m) => m[1]),
+    ...[...app.matchAll(/document\.getElementById\('([a-zA-Z0-9]+)'\)/g)].map((m) => m[1]),
+  ])];
   const ids = [...v2.matchAll(/id="([a-zA-Z0-9]+)"/g)].map((m) => m[1]);
   const present = new Set(ids);
 

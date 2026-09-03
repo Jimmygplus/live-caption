@@ -1453,11 +1453,16 @@ async function openPip() {
 
   // #live is a child of #stage, so moving the stage carries the whole caption
   // area — committed segments, the in-progress line, and the jump button.
+  //
+  // Remember the neighbour rather than looking up a landmark by id on the way
+  // back. An id is markup a layout is free to rename, and when it does,
+  // getElementById returns null — which insertBefore reads as "append", so the
+  // caption area silently reappears below the footer instead of above it.
+  const stageAnchor = el.stage.nextElementSibling;
   pip.document.body.append(el.stage);
 
   pip.addEventListener('pagehide', () => {
-    // Put everything back exactly where it came from, before the footer.
-    document.body.insertBefore(el.stage, document.getElementById('statusBar'));
+    document.body.insertBefore(el.stage, stageAnchor);
     app.pip = null;
     el.pipBtn.setAttribute('aria-pressed', 'false');
     scrollToBottom();
