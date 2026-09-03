@@ -25,7 +25,13 @@ const captionList = document.querySelector('#captionList');
 // that reports what is actually visible.
 function syncViewportHeight() {
   const view = window.visualViewport;
-  document.documentElement.style.setProperty('--vh', `${Math.round(view ? view.height : window.innerHeight)}px`);
+  const root = document.documentElement;
+  root.style.setProperty('--vh', `${Math.round(view ? view.height : window.innerHeight)}px`);
+  // Height alone is not enough. iOS still scrolls the page to keep the focused
+  // field on screen, and with the app shorter than the layout viewport that
+  // leaves it pushed up with a band of nothing underneath. Pinning the body to
+  // the visual viewport's own offset takes that scroll out of the picture.
+  root.style.setProperty('--vv-top', `${Math.round(view ? view.offsetTop : 0)}px`);
 }
 window.visualViewport?.addEventListener('resize', syncViewportHeight);
 window.visualViewport?.addEventListener('scroll', syncViewportHeight);

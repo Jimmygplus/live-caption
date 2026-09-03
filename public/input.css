@@ -56,6 +56,9 @@
    the middle of the screen with the keyboard covering the rest. */
 body {
   margin: 0;
+  position: fixed;
+  inset-inline: 0;
+  inset-block-start: var(--vv-top, 0px);
   height: var(--vh, 100dvh);
   display: grid;
   grid-template-rows: auto 1fr auto;

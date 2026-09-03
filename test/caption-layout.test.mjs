@@ -122,31 +122,20 @@ test('no code reaches for an element the lookup table no longer defines', async 
   assert.deepEqual(orphans, [], 'el.<name> used without a matching entry');
 });
 
-test('picture-in-picture sizes text for its own window, keeping the ratio', async () => {
+test('picture-in-picture keeps the caption size it was given', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../public/v2.css', import.meta.url), 'utf8');
 
-  // Two separate ways the floating window used to get this wrong: the pixel
-  // value was copied straight across, and — because it is around 640px wide —
-  // the narrow-viewport rule meant for phones fired inside it and shrank the
-  // text the reader had just enlarged.
+  // Popping a caption out does not move the reader further away, so the size
+  // must not change. What broke it was the phone rule firing inside a 640px
+  // floating window; an inline value on that document's root outranks it.
   assert.match(css, /@media \(max-width: 820px\)[\s\S]*?--original-size/);
-  assert.match(app, /function syncPipFontSizes/);
-  assert.match(app, /root\.style\.setProperty\('--original-size'/,
-    'an inline value is what outranks that media query');
-
-  const fit = app.match(/function pipFontSizes[\s\S]*?\n}/)?.[0] || '';
-  assert.match(fit, /innerWidth/, 'width bounds it');
-  assert.match(fit, /innerHeight/, 'so does height — a short window fits fewer lines');
-  assert.match(fit, /Math\.min\(chosen/, 'the chosen size is a ceiling, never a target to exceed');
-  assert.match(fit, /fontSizeRatio/, 'the original-to-translation ratio survives the move');
-
-  // A window that changes size changes how much text fits.
-  assert.match(app, /pip\.addEventListener\('resize', syncPipFontSizes\)/);
-
-  // The size is no longer written to both roots at once; only the theme is.
-  assert.doesNotMatch(app, /for \(const root of styleRoots\(\)\) root\.style\.setProperty/);
+  const sync = app.match(/function syncPipFontSizes[\s\S]*?\n}/)?.[0] || '';
+  assert.match(sync, /--original-size'.*origFontSize\.value/s);
+  assert.match(sync, /--translation-size'.*fontSize\.value/s);
+  assert.doesNotMatch(sync, /innerWidth|innerHeight/, 'the window size must not enter into it');
 });
+
 
 test('the pairing code survives theatre mode, which is when it matters most', async () => {
   const css = await readFile(new URL('../public/v2.css', import.meta.url), 'utf8');

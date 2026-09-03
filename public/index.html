@@ -261,9 +261,12 @@
     </div>
   </div>
 
-  <!-- app.js re-parents #startBtn between here and the mobile bar, so this slot
-       must exist in every layout that reuses app.js. -->
-  <div class="console-action" id="startHome"></div>
+  <!-- The button starts in its slot. Rendering it elsewhere and letting JS move
+       it on load made every page load flash: it appeared full-width at the foot
+       of the page for a frame before jumping up here. -->
+  <div class="console-action" id="startHome">
+    <button id="startBtn" class="primary start" type="button">开始</button>
+  </div>
 </section>
 
 <nav id="mobileBar" class="mobile-bar" hidden>
@@ -291,7 +294,6 @@
   <span id="errorText" class="error"></span>
 </footer>
 
-<button id="startBtn" class="primary start" type="button">开始</button>
 
 <dialog id="termsDialog" class="sheet">
   <form method="dialog">

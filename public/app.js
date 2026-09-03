@@ -710,6 +710,10 @@ function saveAudienceHostSession(session) {
   sessionStorage.setItem(AUDIENCE_HOST_SESSION_KEY, JSON.stringify({
     id: session.id,
     expiresAt: session.expiresAt,
+    // Without these a refresh loses the code: the chip vanishes and the dialog
+    // falls back to handing out the long access link instead of the home page.
+    pairingCode: session.pairingCode,
+    pairingExpiresAt: session.pairingExpiresAt,
     hostTokenHash: session.hostTokenHash,
     joinSecret: session.joinSecret,
     relayUrl: session.relayUrl,
@@ -1707,9 +1711,6 @@ async function openPip() {
   pip.document.documentElement.dataset.theme = document.documentElement.dataset.theme;
   pip.document.documentElement.style.cssText = document.documentElement.style.cssText;
   syncPipFontSizes();
-  // Resizing the floating window changes how much text fits, so the size has to
-  // follow it rather than being decided once at open.
-  pip.addEventListener('resize', syncPipFontSizes);
   pip.document.body.dataset.view = el.body.dataset.view;
   pip.document.body.classList.add('pip');
 
@@ -3699,31 +3700,15 @@ function styleRoots() {
   return [document.documentElement, app.pip?.document.documentElement].filter(Boolean);
 }
 
-// The sliders express an intent — how big, and how much larger the original is
-// than the translation — for the window the reader is looking at. Copying the
-// pixel value into a small floating window renders two words a line, and
-// letting a width media query decide instead throws away an explicit choice.
-// So: keep the ratio, fit the box, never exceed what was asked for.
-function pipFontSizes() {
-  const view = app.pip;
-  if (!view) return null;
-  const chosen = Number(el.origFontSize.value) || 42;
-  const byWidth = (view.innerWidth || 640) * 0.05;
-  const byHeight = (view.innerHeight || 240) * 0.13;
-  const original = Math.max(16, Math.min(chosen, Math.round(Math.min(byWidth, byHeight))));
-  const ratio = fontSizeRatio > 0 ? fontSizeRatio : 42 / 34;
-  return { original, translation: Math.max(13, Math.round(original / ratio)) };
-}
-
-// Written inline on the picture-in-picture root, which also settles the other
-// half of the bug: an inline value outranks the narrow-viewport rule that would
-// otherwise treat a 640px floating window as a phone.
+// Same size as the main window — popping a caption out does not change how far
+// away the reader is sitting. Written inline on the floating document's root
+// because that is what outranks the narrow-viewport rule, which would otherwise
+// treat a 640px window as a phone and shrink text the reader had just enlarged.
 function syncPipFontSizes() {
-  const sizes = pipFontSizes();
-  if (!sizes) return;
-  const root = app.pip.document.documentElement;
-  root.style.setProperty('--original-size', `${sizes.original}px`);
-  root.style.setProperty('--translation-size', `${sizes.translation}px`);
+  const root = app.pip?.document.documentElement;
+  if (!root) return;
+  root.style.setProperty('--original-size', `${el.origFontSize.value}px`);
+  root.style.setProperty('--translation-size', `${el.fontSize.value}px`);
 }
 
 function applyFontSize(input, cssVar, storageKey) {
