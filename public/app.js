@@ -1244,9 +1244,43 @@ function applyModeLabels() {
   }
 }
 
+// The console collapses rather than disappearing, and remembers nothing across
+// states on purpose: each state has an obvious right default, and the toggle is
+// there for the times it guesses wrong.
+const consoleToggle = document.getElementById('consoleToggle');
+const consoleSummary = document.getElementById('consoleSummary');
+
+function describeSession() {
+  const pick = (select) => select?.selectedOptions[0]?.textContent?.trim() || '';
+  const source = pick(el.sourceLang);
+  const target = pick(el.targetLang);
+  const languages = source && target ? `${source} → ${target}` : source || target;
+  const parts = [languages, pick(el.engine), pick(el.device)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '会话设置';
+}
+
+function setConsoleCollapsed(collapsed) {
+  if (!consoleToggle) return;
+  el.body.classList.toggle('console-collapsed', collapsed);
+  consoleToggle.setAttribute('aria-expanded', String(!collapsed));
+  if (consoleSummary) consoleSummary.textContent = collapsed ? describeSession() : '会话设置';
+}
+
+consoleToggle?.addEventListener('click', () => {
+  setConsoleCollapsed(!el.body.classList.contains('console-collapsed'));
+});
+
 function setStatus(state, text) {
+  const previous = el.body.dataset.state;
   el.body.dataset.state = state;
   el.statusText.textContent = text;
+
+  // Running: collapse, because the captions are what you came for. Idle with a
+  // transcript already on screen: collapse too, you are reading, not setting up.
+  // Idle with nothing: expand, since setting up is the only thing to do.
+  if (state !== previous) {
+    setConsoleCollapsed(state === 'running' || state === 'connecting' || app.segments.length > 0);
+  }
 }
 
 function setError(message) {
@@ -1346,7 +1380,13 @@ function offerRestore() {
   showNotice(
     `发现上次未导出的字幕记录：${data.segments.length} 条（${when}）。`,
     '恢复',
-    () => restoreTranscript(data),
+    () => {
+      restoreTranscript(data);
+      // Restoring puts a transcript on screen without passing through
+      // setStatus, so the console would otherwise stay expanded and squeeze
+      // the very thing the user just asked to see.
+      setConsoleCollapsed(true);
+    },
   );
 }
 

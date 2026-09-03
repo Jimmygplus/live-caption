@@ -83,6 +83,13 @@
        close control of its own. app.js wires this up only when it exists. -->
   <button id="sheetClose" class="sheet-close" type="button">完成</button>
 
+  <!-- Collapsing, never hiding: the settings stay one click away because a
+       session is exactly when you discover the language or the input is wrong. -->
+  <button id="consoleToggle" class="console-toggle" type="button" aria-expanded="true" aria-controls="controls">
+    <span class="console-chevron" aria-hidden="true">▾</span>
+    <span id="consoleSummary" class="console-summary">会话设置</span>
+  </button>
+
   <div id="controls" class="setup">
     <div class="setup-groups">
 

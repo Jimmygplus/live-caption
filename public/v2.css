@@ -629,6 +629,12 @@ body[data-state="idle"] main#stage {
 }
 body[data-state="idle"] .placeholder { margin-inline: auto; width: min(1020px, 100%); }
 body[data-state="idle"] .notice { margin-inline: auto; width: min(1020px, 100%); }
+body:not(.phone).console-collapsed[data-state="idle"] .console {
+  padding: 6px 26px;
+  margin-bottom: 14px;
+  box-shadow: var(--sh-sm);
+}
+
 body:not(.phone)[data-state="idle"] .console {
   width: min(1020px, 100%);
   margin-inline: auto;
@@ -641,10 +647,33 @@ body:not(.phone)[data-state="idle"] .console {
 }
 body:not(.phone)[data-state="idle"] .console-action { align-self: end; }
 
-body[data-state="running"] .setup,
-body[data-state="connecting"] .setup { display: none; }
+/* One mechanism, three defaults. Hiding the settings outright was wrong: a
+   session is precisely when you find out the language or the input is wrong,
+   and recovering meant stopping and starting over. */
+body.console-collapsed .setup { display: none; }
+
 body[data-state="running"] .live-tools,
 body[data-state="connecting"] .live-tools { display: flex; }
+
+.console-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+.console-chevron { color: var(--dim); transition: transform .18s; }
+body.console-collapsed .console-chevron { transform: rotate(-90deg); }
+.console-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) {
+  .console-toggle:hover { color: var(--text); }
+}
 
 .menu { position: relative; }
 .menu summary { list-style: none; }
