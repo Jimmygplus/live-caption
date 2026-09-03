@@ -629,57 +629,151 @@ test('host controls combine signal threshold, link font sizes and default to sho
   assert.match(script, /processorOptions: \{ levelsOnly: true \}/);
 });
 
-function stubRelayEnv(respond) {
-  const minted = [];
+// A Durable Object namespace with real per-name storage. The pairing records,
+// the rate-limit counters and the rooms all live in this one class, told apart
+// only by their name prefix, so the fake has to keep them apart the same way.
+function fakeNamespace() {
+  const stores = new Map();
+  const store = (name) => {
+    if (!stores.has(name)) stores.set(name, new Map());
+    return stores.get(name);
+  };
   return {
-    minted,
-    env: {
-      AUDIENCE_ROOMS: {
-        idFromName: (name) => ({ name }),
-        get: () => ({
-          fetch: async (_url, init) => {
-            const { id } = JSON.parse(init.body);
-            minted.push(id);
-            return respond(minted.length);
-          },
-        }),
+    stores,
+    idFromName: (name) => ({ name }),
+    get: ({ name }) => ({
+      async fetch(input, init = {}) {
+        const url = new URL(typeof input === 'string' ? input : input.url);
+        const body = init.body ? JSON.parse(init.body) : {};
+        const kv = store(name);
+
+        if (url.pathname === '/internal/init') {
+          const current = kv.get('meta');
+          if (current && !current.closed && current.expiresAt > Date.now()) {
+            return new Response('exists', { status: 409 });
+          }
+          kv.set('meta', { ...body, closed: false });
+          return new Response(null, { status: 204 });
+        }
+        if (url.pathname === '/internal/verify-host') {
+          const meta = kv.get('meta');
+          if (!meta || meta.closed) return new Response('no room', { status: 404 });
+          if (meta.hostHash !== body.hostHash) return new Response('bad', { status: 401 });
+          return new Response(null, { status: 204 });
+        }
+        if (url.pathname === '/internal/pair-claim') {
+          const held = kv.get('pair');
+          if (held && held.expiresAt > body.now && held.roomId !== body.roomId) {
+            return new Response('taken', { status: 409 });
+          }
+          kv.set('pair', { roomId: body.roomId, expiresAt: body.expiresAt });
+          return new Response(null, { status: 204 });
+        }
+        if (url.pathname === '/internal/pair-resolve') {
+          const held = kv.get('pair');
+          const now = Number(url.searchParams.get('now')) || Date.now();
+          if (!held || held.expiresAt <= now) return new Response('unknown', { status: 404 });
+          return Response.json({ roomId: held.roomId, expiresAt: held.expiresAt });
+        }
+        if (url.pathname === '/internal/rate') {
+          const windowStart = Math.floor(body.now / body.windowMs) * body.windowMs;
+          const held = kv.get('rate');
+          const attempts = held?.windowStart === windowStart ? held.attempts + 1 : 1;
+          kv.set('rate', { windowStart, attempts });
+          return new Response(null, { status: attempts <= body.max ? 204 : 429 });
+        }
+        throw new Error(`unexpected internal path ${url.pathname}`);
       },
-    },
+    }),
   };
 }
 
-function createRoomRequest() {
-  return new Request('https://relay.example/v1/rooms', {
-    method: 'POST',
-    headers: { origin: 'https://jimmygplus.github.io', 'content-type': 'application/json' },
-    body: JSON.stringify({ hostHash: 'a'.repeat(64), joinHash: 'b'.repeat(64) }),
+const HOST_HASH = 'a'.repeat(64);
+const JOIN_HASH = 'b'.repeat(64);
+
+function relayRequest(path, { method = 'GET', body, ip = '203.0.113.9' } = {}) {
+  return new Request(`https://relay.example${path}`, {
+    method,
+    headers: {
+      origin: 'https://jimmygplus.github.io',
+      'content-type': 'application/json',
+      'cf-connecting-ip': ip,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
 
-test('relay mints a short room code and retries past a collision', async () => {
-  const ok = stubRelayEnv(() => new Response(null, { status: 204 }));
-  const created = await relayWorker.fetch(createRoomRequest(), ok.env);
+const createRoom = (env) =>
+  relayWorker.fetch(relayRequest('/v1/rooms', { method: 'POST', body: { hostHash: HOST_HASH, joinHash: JOIN_HASH } }), env);
+
+test('a room keeps a permanent id while its pairing code can be replaced', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+
+  const created = await createRoom(env);
   assert.equal(created.status, 201);
-  const body = await created.json();
-  assert.equal(ok.minted.length, 1);
-  assert.equal(body.id, ok.minted[0]);
-  assert.equal(isRoomCode(body.id), true, 'minted id must be a valid short room code');
+  const room = await created.json();
 
-  // A live room answers 409; the host should still get a room on a fresh code.
-  const collided = stubRelayEnv((attempt) => new Response(null, { status: attempt === 1 ? 409 : 204 }));
-  const retried = await relayWorker.fetch(createRoomRequest(), collided.env);
-  assert.equal(retried.status, 201);
-  assert.equal(collided.minted.length, 2);
-  assert.notEqual(collided.minted[0], collided.minted[1], 'retry must mint a fresh code');
+  assert.match(room.id, /^[A-HJ-NP-Z2-9]{16}$/, 'the room id is internal, so it is long');
+  assert.match(room.pairingCode, /^[0-9]{6}$/, 'what people read aloud is six digits');
+  assert.ok(room.pairingExpiresAt > Date.now(), 'the code carries its own expiry');
 
-  // Exhausting every attempt surfaces a failure rather than looping forever.
-  const exhausted = stubRelayEnv(() => new Response(null, { status: 409 }));
-  const gaveUp = await relayWorker.fetch(createRoomRequest(), exhausted.env);
-  assert.equal(gaveUp.status, 503);
-  assert.equal(exhausted.minted.length, 5);
+  // The code is a ticket to the door: it yields a room id and nothing else.
+  const resolved = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
+  assert.equal(resolved.status, 200);
+  const found = await resolved.json();
+  assert.equal(found.roomId, room.id);
+  assert.equal(found.joinSecret, undefined, 'the relay never holds the key');
 
-  // A non-collision failure must not burn the remaining attempts.
-  const broken = stubRelayEnv(() => new Response(null, { status: 500 }));
-  assert.equal((await relayWorker.fetch(createRoomRequest(), broken.env)).status, 503);
-  assert.equal(broken.minted.length, 1);
+  // Re-issuing is the eject button: a new code, the same room.
+  const reissued = await relayWorker.fetch(
+    relayRequest(`/v1/rooms/${room.id}/pairing`, { method: 'POST', body: { hostHash: HOST_HASH } }), env);
+  assert.equal(reissued.status, 200);
+  const next = await reissued.json();
+  assert.notEqual(next.pairingCode, room.pairingCode);
+
+  const stillThere = await relayWorker.fetch(relayRequest(`/v1/pairing/${next.pairingCode}`), env);
+  assert.equal((await stillThere.json()).roomId, room.id, 'the room outlives its codes');
+});
+
+test('only the host can replace a pairing code', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  const room = await (await createRoom(env)).json();
+
+  const impostor = await relayWorker.fetch(
+    relayRequest(`/v1/rooms/${room.id}/pairing`, { method: 'POST', body: { hostHash: 'c'.repeat(64) } }), env);
+  assert.equal(impostor.status, 401);
+
+  const malformed = await relayWorker.fetch(
+    relayRequest(`/v1/rooms/${room.id}/pairing`, { method: 'POST', body: { hostHash: 'nope' } }), env);
+  assert.equal(malformed.status, 400);
+});
+
+test('resolving a pairing code is rate limited so six digits cannot be walked', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  await createRoom(env);
+
+  let limited = 0;
+  for (let i = 0; i < 30; i += 1) {
+    const guess = String(100000 + i);
+    const res = await relayWorker.fetch(relayRequest(`/v1/pairing/${guess}`), env);
+    if (res.status === 429) limited += 1;
+  }
+  assert.ok(limited > 0, 'a single address must be throttled while enumerating');
+
+  // A different address is unaffected — the limit is per visitor, not global.
+  const other = await relayWorker.fetch(relayRequest('/v1/pairing/999999', { ip: '198.51.100.4' }), env);
+  assert.equal(other.status, 404, 'unknown code, but not throttled');
+
+  assert.ok(![...env.AUDIENCE_ROOMS.stores.keys()].some((k) => k.includes('203.0.113.9') === false && k.startsWith('rl:') === false && k.includes('.')),
+    'addresses only ever appear as a Durable Object name');
+});
+
+test('an expired pairing code stops resolving', async () => {
+  const env = { AUDIENCE_ROOMS: fakeNamespace() };
+  const room = await (await createRoom(env)).json();
+  const pairStore = env.AUDIENCE_ROOMS.stores.get(`pair:${room.pairingCode}`);
+  pairStore.set('pair', { ...pairStore.get('pair'), expiresAt: Date.now() - 1 });
+
+  const gone = await relayWorker.fetch(relayRequest(`/v1/pairing/${room.pairingCode}`), env);
+  assert.equal(gone.status, 404);
 });

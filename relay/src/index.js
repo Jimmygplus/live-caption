@@ -6,17 +6,63 @@ const HOST_AWAY_MS = 30_000;
 const JOIN_REQUEST_TTL_MS = 60_000;
 const MAX_PENDING_JOIN_REQUESTS = 12;
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const ROOM_CODE_LENGTH = 6;
-const ROOM_CODE_ATTEMPTS = 5;
+
+// The room id is internal and permanent; nobody reads it aloud, so it is long.
+// What people type is a pairing code, and that is deliberately separate: a code
+// has to be revocable — the host's only way to eject someone is to mint a new
+// one — and revoking it must not disturb the room or the people already in it.
+const ROOM_ID_LENGTH = 16;
+const PAIRING_DIGITS = 6;
+const PAIRING_TTL_MS = 15 * 60 * 1000;
+const PAIRING_ATTEMPTS = 5;
+
+// Six digits is a million combinations, so resolution has to be rate limited or
+// the space is walkable. Counted per address in a Durable Object; the address
+// only ever appears in a DO name, which is stored as a derived id, never as text.
+const RESOLVE_WINDOW_MS = 10 * 60 * 1000;
+const RESOLVE_MAX = 20;
 const ALLOWED_ORIGINS = new Set([
   'https://jimmygplus.github.io',
   'http://localhost:5175',
   'http://127.0.0.1:5175',
 ]);
 
-function randomRoomCode(length = ROOM_CODE_LENGTH) {
+function randomRoomId(length = ROOM_ID_LENGTH) {
   const values = crypto.getRandomValues(new Uint8Array(length));
   return [...values].map((value) => ROOM_CODE_ALPHABET[value % ROOM_CODE_ALPHABET.length]).join('');
+}
+
+// Digits only: read aloud across a room, "four seven two nine one five" beats
+// any alphanumeric string, and it carries no letter/number ambiguity in any
+// language. Rejection sampling keeps every code equally likely.
+function randomPairingCode() {
+  let out = '';
+  while (out.length < PAIRING_DIGITS) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(PAIRING_DIGITS))) {
+      if (byte >= 250) continue; // 250..255 would bias the low digits
+      out += String(byte % 10);
+      if (out.length === PAIRING_DIGITS) break;
+    }
+  }
+  return out;
+}
+
+const pairingStub = (env, code) => env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(`pair:${code}`));
+
+// Claims a free code for a room, replacing whatever the room had before. The
+// old code is not actively deleted — it simply stops resolving to this room
+// once this one is recorded, and expires on its own schedule.
+async function mintPairingCode(env, roomId, now) {
+  const expiresAt = now + PAIRING_TTL_MS;
+  for (let attempt = 0; attempt < PAIRING_ATTEMPTS; attempt += 1) {
+    const code = randomPairingCode();
+    const claimed = await pairingStub(env, code).fetch('https://audience-room/internal/pair-claim', {
+      method: 'POST',
+      body: JSON.stringify({ roomId, expiresAt, now }),
+    });
+    if (claimed.ok) return { code, expiresAt };
+  }
+  return null;
 }
 
 function allowedOrigin(request) {
@@ -67,26 +113,67 @@ export default {
       if (!/^[0-9a-f]{64}$/.test(body.hostHash) || !/^[0-9a-f]{64}$/.test(body.joinHash)) {
         return json(request, { error: 'Invalid room credentials.' }, 400);
       }
-      const expiresAt = Date.now() + ROOM_TTL_MS;
-      // A short code is easier to read aloud but collides more often, and
-      // /internal/init answers 409 while the previous room is still live, so
-      // retry with a fresh code instead of failing the host outright.
-      for (let attempt = 0; attempt < ROOM_CODE_ATTEMPTS; attempt += 1) {
-        const id = randomRoomCode();
-        const room = env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(id));
-        const initialized = await room.fetch('https://audience-room/internal/init', {
-          method: 'POST',
-          body: JSON.stringify({
-            id,
-            hostHash: body.hostHash,
-            joinHash: body.joinHash,
-            expiresAt,
-          }),
-        });
-        if (initialized.ok) return json(request, { id, expiresAt }, 201);
-        if (initialized.status !== 409) break;
+      const now = Date.now();
+      const expiresAt = now + ROOM_TTL_MS;
+      // Sixteen random characters, so a collision here is not a scenario worth
+      // retrying for — unlike the short code this replaced.
+      const id = randomRoomId();
+      const room = env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(id));
+      const initialized = await room.fetch('https://audience-room/internal/init', {
+        method: 'POST',
+        body: JSON.stringify({ id, hostHash: body.hostHash, joinHash: body.joinHash, expiresAt }),
+      });
+      if (!initialized.ok) return json(request, { error: 'Could not create room.' }, 503);
+
+      const pairing = await mintPairingCode(env, id, now);
+      if (!pairing) return json(request, { error: 'Could not issue a pairing code.' }, 503);
+      return json(request, {
+        id,
+        expiresAt,
+        pairingCode: pairing.code,
+        pairingExpiresAt: pairing.expiresAt,
+      }, 201);
+    }
+
+    // Re-issuing is the host's eject button: the previous code stops resolving
+    // here, while the room and everyone already inside carry on untouched.
+    const pairMatch = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{6,32})\/pairing$/);
+    if (pairMatch && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      if (!/^[0-9a-f]{64}$/.test(body.hostHash || '')) {
+        return json(request, { error: 'Invalid room credential.' }, 400);
       }
-      return json(request, { error: 'Could not create room.' }, 503);
+      const verified = await env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(pairMatch[1]))
+        .fetch('https://audience-room/internal/verify-host', {
+          method: 'POST',
+          body: JSON.stringify({ hostHash: body.hostHash }),
+        });
+      if (verified.status === 401) return json(request, { error: 'Invalid room credential.' }, 401);
+      if (!verified.ok) return json(request, { error: 'Room not found.' }, 404);
+
+      const pairing = await mintPairingCode(env, pairMatch[1], Date.now());
+      if (!pairing) return json(request, { error: 'Could not issue a pairing code.' }, 503);
+      return json(request, { pairingCode: pairing.code, pairingExpiresAt: pairing.expiresAt });
+    }
+
+    // Resolving hands back a room id and nothing else. Reaching the door is not
+    // the same as getting in: the joiner still has to complete the key exchange
+    // with the host, and the relay never learns that key.
+    const resolveMatch = url.pathname.match(/^\/v1\/pairing\/([0-9]{6})$/);
+    if (resolveMatch && request.method === 'GET') {
+      const address = request.headers.get('cf-connecting-ip') || 'unknown';
+      const limiter = env.AUDIENCE_ROOMS.get(env.AUDIENCE_ROOMS.idFromName(`rl:${address}`));
+      const allowed = await limiter.fetch('https://audience-room/internal/rate', {
+        method: 'POST',
+        body: JSON.stringify({ now: Date.now(), windowMs: RESOLVE_WINDOW_MS, max: RESOLVE_MAX }),
+      });
+      if (!allowed.ok) return json(request, { error: '尝试次数过多，请稍后再试。' }, 429);
+
+      const found = await pairingStub(env, resolveMatch[1])
+        .fetch(`https://audience-room/internal/pair-resolve?now=${Date.now()}`);
+      if (!found.ok) return json(request, { error: '配对码无效或已过期。' }, 404);
+      return json(request, await found.json());
     }
 
     const closeMatch = url.pathname.match(/^\/v1\/rooms\/([A-Za-z0-9_-]{6,32})\/close$/);
@@ -124,6 +211,45 @@ export class AudienceRoom {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // A pairing record and a rate-limit counter are tiny and short-lived, so
+    // they ride in this same Durable Object class under their own name prefixes
+    // rather than earning a second class and a migration. An instance only ever
+    // sees one kind of request: its name decides which.
+    if (url.pathname === '/internal/pair-claim' && request.method === 'POST') {
+      const body = await request.json();
+      const held = await this.state.storage.get('pair');
+      // A code still pointing at a different live room must not be reassigned.
+      if (held && held.expiresAt > body.now && held.roomId !== body.roomId) {
+        return new Response('Code in use.', { status: 409 });
+      }
+      await this.state.storage.put('pair', { roomId: body.roomId, expiresAt: body.expiresAt });
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === '/internal/pair-resolve') {
+      const held = await this.state.storage.get('pair');
+      const now = Number(url.searchParams.get('now')) || Date.now();
+      if (!held || held.expiresAt <= now) return new Response('Unknown code.', { status: 404 });
+      return Response.json({ roomId: held.roomId, expiresAt: held.expiresAt });
+    }
+
+    if (url.pathname === '/internal/rate' && request.method === 'POST') {
+      const { now, windowMs, max } = await request.json();
+      const windowStart = Math.floor(now / windowMs) * windowMs;
+      const held = await this.state.storage.get('rate');
+      const attempts = held?.windowStart === windowStart ? held.attempts + 1 : 1;
+      await this.state.storage.put('rate', { windowStart, attempts });
+      return new Response(null, { status: attempts <= max ? 204 : 429 });
+    }
+
+    if (url.pathname === '/internal/verify-host' && request.method === 'POST') {
+      const meta = await this.state.storage.get('meta');
+      if (!meta || meta.closed) return new Response('Room not found.', { status: 404 });
+      const body = await request.json();
+      if (body.hostHash !== meta.hostHash) return new Response('Invalid credential.', { status: 401 });
+      return new Response(null, { status: 204 });
+    }
 
     if (url.pathname === '/internal/init' && request.method === 'POST') {
       const current = await this.state.storage.get('meta');
