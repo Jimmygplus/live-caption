@@ -211,8 +211,8 @@ test('trial UI states the boundary and keeps the code out of the address bar', a
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const worker = await readFile(new URL('../trial/src/index.js', import.meta.url), 'utf8');
-  assert.match(html, /推荐码免费体验 30 分钟/);
-  assert.match(html, /刷新或断线不会保留剩余时间/);
+  assert.match(html, /免费体验 30 分钟/);
+  assert.match(html, /刷新或断线不保留剩余时间/);
   assert.match(worker, /max_session_duration_seconds: TRIAL_SECONDS/);
   assert.doesNotMatch(worker, /console\.(log|error).*code/i);
   // A shared ?k= link must not leave the code sitting in the URL afterwards.

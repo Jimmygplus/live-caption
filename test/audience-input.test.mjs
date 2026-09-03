@@ -605,7 +605,7 @@ test('participant page keeps speaking first and full captions available on deman
 test('host controls combine signal threshold, link font sizes and default to short captions', async () => {
   const [html, css, script] = await Promise.all([
     readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
-    readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
+    readFile(new URL('../public/v2.css', import.meta.url), 'utf8'),
     readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   ]);
   assert.match(html, /<option value="short" selected>短<\/option>/);
@@ -617,7 +617,11 @@ test('host controls combine signal threshold, link font sizes and default to sho
   assert.match(html, /降噪关 · 回声消除关 · 自动增益关/);
   assert.doesNotMatch(html, /id="meterGate"/);
   assert.match(css, /\.signal-track input\[type="range"\]/);
-  assert.match(css, /body\.phone #controls \{[\s\S]*?flex-wrap: nowrap;/);
+  // V1 guarded this with a nowrap flex row on #controls. V2's sheet is a fixed
+  // bottom panel instead, and its load-bearing property is that closing it
+  // removes it completely — a margin once left 70px of it on screen.
+  assert.match(css, /body\.phone \.console \{[\s\S]*?position: fixed;/);
+  assert.match(css, /body\.phone \.console \{[\s\S]*?visibility: hidden;/);
   assert.match(script, /localStorage\.getItem\('lc\.length'\) \|\| 'short'/);
   assert.match(script, /未检测到声音 · 请更换输入/);
   assert.match(script, /level: \(data\) => showAudioLevel\(data\)/);

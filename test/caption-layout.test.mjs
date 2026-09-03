@@ -5,7 +5,7 @@ import test from 'node:test';
 const publicDir = new URL('../public/', import.meta.url);
 const [html, css, app] = await Promise.all([
   readFile(new URL('index.html', publicDir), 'utf8'),
-  readFile(new URL('styles.css', publicDir), 'utf8'),
+  readFile(new URL('v2.css', publicDir), 'utf8'),
   readFile(new URL('app.js', publicDir), 'utf8'),
 ]);
 
@@ -27,9 +27,13 @@ test('caption controls and live/final layout retain their no-shift structure', (
   assert.match(html, /id="captionEditOriginal"[^>]*required/);
 
   assert.match(css, /\.segment\s*{[^}]*padding-inline-start:\s*14px;[^}]*border-inline-start:\s*3px solid transparent;/s);
-  assert.match(css, /body\.phone \.segment-edit\s*{\s*opacity:\s*1;/);
-  assert.match(css, /body\.show-timestamps \.segment \.timestamp\s*{\s*display:\s*inline;/);
-  assert.match(css, /\.segment \.timestamp\s*{\s*display:\s*none;/);
+  // The intent is unchanged — a correction must be reachable without hover —
+  // but V1 met it by pinning the button visible and V2 by a long-press, after
+  // a button under every caption turned the transcript into a column of them.
+  assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.segment-edit \{ display: none; \}/);
+  assert.match(app, /bindLongPressToCorrect/);
+  assert.match(css, /body\.show-timestamps \.timestamp\s*{\s*display:\s*inline;/);
+  assert.match(css, /\.timestamp\s*{\s*display:\s*none;/);
 
   assert.match(app, /function setTimestamps\(on\)/);
   assert.match(app, /localStorage\.setItem\('lc\.timestamps'/);
@@ -38,9 +42,9 @@ test('caption controls and live/final layout retain their no-shift structure', (
   assert.match(app, /segment\.node\?\.querySelector\('\.segment-edit'\)\?\.focus\(\)/);
 });
 
-test('v2 markup serves the whole element contract app.js depends on', async () => {
+test('the shipped markup serves the whole element contract app.js depends on', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  const v2 = await readFile(new URL('../public/v2.html', import.meta.url), 'utf8');
+  const v2 = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 
   // app.js is shared verbatim between layouts, so a layout that omits one id
   // fails at the first $() call rather than anywhere near the cause.
@@ -75,7 +79,7 @@ test('sample codes shown to users match the formats actually accepted', async ()
   assert.equal(bareRoom.length, ROOM_CODE_LENGTH, `room sample ${roomSample} is the wrong length`);
   assert.equal(isRoomCode(bareRoom), true, `room sample ${roomSample} uses characters the alphabet excludes`);
 
-  for (const file of ['index.html', 'v2.html']) {
+  for (const file of ['index.html', 'v1.html']) {
     const html = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
     const trialSample = html.match(/id="trialCode"[\s\S]*?placeholder="([^"]+)"/)?.[1];
     assert.ok(trialSample, `${file} must show a trial code placeholder`);
