@@ -644,7 +644,7 @@ body[data-state="idle"] main#stage {
 body[data-state="idle"] .placeholder { margin-inline: auto; width: min(1020px, 100%); }
 body[data-state="idle"] .notice { margin-inline: auto; width: min(1020px, 100%); }
 body:not(.phone).console-collapsed[data-state="idle"] .console {
-  padding: 6px 26px;
+  padding: 16px 26px;
   margin-bottom: 14px;
   box-shadow: var(--sh-sm);
 }
@@ -663,8 +663,34 @@ body:not(.phone)[data-state="idle"] .console-action { align-self: end; }
 
 /* One mechanism, three defaults. Hiding the settings outright was wrong: a
    session is precisely when you find out the language or the input is wrong,
-   and recovering meant stopping and starting over. */
-body.console-collapsed .setup { display: none; }
+   and recovering meant stopping and starting over.
+
+   Collapsing used to swap the controls for a sentence describing them, which
+   is worse than hiding them honestly: a sentence looks like text, so changing
+   the microphone meant first realising the line was a button, expanding, then
+   hunting for the field. Collapsed now keeps the same live <select>s in one
+   compact row and drops only the scaffolding — the step numbers, the hints,
+   the presentation extras — so the settings people actually change are one
+   click from being changed rather than three. */
+body:not(.phone).console-collapsed .setup-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 18px;
+}
+body:not(.phone).console-collapsed .group { flex: 1 1 auto; }
+body:not(.phone).console-collapsed .group legend,
+body:not(.phone).console-collapsed .group-hint,
+body:not(.phone).console-collapsed .advanced,
+body:not(.phone).console-collapsed .group-audio .row > .ghost,
+body:not(.phone).console-collapsed .group-lang .row > .swap { display: none; }
+/* These two force their own line in the full layout; in one row they share it. */
+body:not(.phone).console-collapsed .group-lang .row > .field:first-child,
+body:not(.phone).console-collapsed .group-engine .row > .field { flex: 1 1 0; }
+body:not(.phone).console-collapsed .field label { font-size: 11px; }
+
+/* The sheet on a phone opens and closes as a whole; there is no compact row. */
+body.phone.console-collapsed .setup { display: none; }
 
 body[data-state="running"] .live-tools,
 body[data-state="connecting"] .live-tools { display: flex; }
@@ -1064,10 +1090,11 @@ body.theater.peek .pairing-chip {
   opacity: 1;
   margin-inline-start: 14px;
 }
+/* Peeking pushes the page down instead of covering it. As an overlay it ate
+   the top of whatever was on screen — the first caption line was sliced in
+   half — and a bar you summoned to read is not worth a line you were reading. */
 body.theater.peek .topbar {
-  position: fixed;
-  inset-block-start: 0;
-  inset-inline: 0;
+  position: relative;
   z-index: 35;
   box-shadow: var(--sh-md);
   /* Room at the end of the row for the exit button, which is fixed to this same

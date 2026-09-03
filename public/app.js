@@ -1472,20 +1472,14 @@ function applyModeLabels() {
 const consoleToggle = document.getElementById('consoleToggle');
 const consoleSummary = document.getElementById('consoleSummary');
 
-function describeSession() {
-  const pick = (select) => select?.selectedOptions[0]?.textContent?.trim() || '';
-  const source = pick(el.sourceLang);
-  const target = pick(el.targetLang);
-  const languages = source && target ? `${source} → ${target}` : source || target;
-  const parts = [languages, pick(el.engine), pick(el.device)].filter(Boolean);
-  return parts.length ? parts.join(' · ') : '会话设置';
-}
 
 function setConsoleCollapsed(collapsed) {
   if (!consoleToggle) return;
   el.body.classList.toggle('console-collapsed', collapsed);
   consoleToggle.setAttribute('aria-expanded', String(!collapsed));
-  if (consoleSummary) consoleSummary.textContent = collapsed ? describeSession() : '会话设置';
+  // The controls themselves stay on screen either way, so this names what the
+  // toggle adds rather than restating settings the row already shows.
+  if (consoleSummary) consoleSummary.textContent = collapsed ? '更多设置' : '收起';
 }
 
 consoleToggle?.addEventListener('click', () => {
