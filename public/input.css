@@ -51,10 +51,12 @@
 
 * { box-sizing: border-box; }
 
-/* dvh, so the composer stays above the browser chrome as it hides and shows. */
+/* --vh is the visual viewport, kept current by input.js. dvh alone is not
+   enough: on iOS the keyboard does not shrink it, so the composer would sit in
+   the middle of the screen with the keyboard covering the rest. */
 body {
   margin: 0;
-  height: 100dvh;
+  height: var(--vh, 100dvh);
   display: grid;
   grid-template-rows: auto 1fr auto;
   background: var(--bg);

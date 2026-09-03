@@ -18,6 +18,19 @@ const lastState = document.querySelector('#lastState');
 const lastText = document.querySelector('#lastText');
 const captionPanel = document.querySelector('#captionPanel');
 const captionList = document.querySelector('#captionList');
+
+// iOS keeps the layout viewport at full height when the keyboard opens, so a
+// 100dvh grid keeps reserving space that is now behind the keyboard and the
+// composer ends up stranded mid-screen. The visual viewport is the only thing
+// that reports what is actually visible.
+function syncViewportHeight() {
+  const view = window.visualViewport;
+  document.documentElement.style.setProperty('--vh', `${Math.round(view ? view.height : window.innerHeight)}px`);
+}
+window.visualViewport?.addEventListener('resize', syncViewportHeight);
+window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+window.addEventListener('orientationchange', syncViewportHeight);
+syncViewportHeight();
 const captionEmpty = document.querySelector('#captionEmpty');
 const captionState = document.querySelector('#captionState');
 const captionToggle = document.querySelector('#captionToggle');
@@ -148,6 +161,9 @@ function armRoomExpiry(value) {
   expiryTimer = setTimeout(() => finishRoom('本次字幕直播间已经到期。'), remaining);
 }
 
+// Only shown while a message is still in flight or queued. Once it lands the
+// participant sees their own line in the transcript, which says more than any
+// wording here could.
 function setLast(message, state) {
   lastText.textContent = message.text;
   lastState.textContent = state;
@@ -307,7 +323,9 @@ async function connectRelay() {
     } else if (message.type === 'displayed') {
       const item = pending.get(message.messageId);
       if (!item) return;
-      setLast(item, '主持端已接收并显示');
+      // The bubble in the timeline is the confirmation now, so the little
+      // status box goes away rather than saying the same thing twice.
+      lastSent.hidden = true;
       pending.delete(message.messageId);
       savePending();
       setStatus('主持端已接收并显示。', 'ok');

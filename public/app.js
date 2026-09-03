@@ -1004,6 +1004,10 @@ function receiveAudienceMessage(message, session) {
     author: message.name,
   });
   showTypedNote(segment, message.name);
+  // Send it back to the room as well. Only the big screen used to see a typed
+  // contribution, which leaves a second Deaf participant unable to follow the
+  // first — and leaves the sender with no evidence it arrived anywhere.
+  publishAudienceSegment(segment);
   const detectedLanguage = message.language === 'auto'
     ? detectTypedLanguage(message.text)
     : message.language || null;

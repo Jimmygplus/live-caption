@@ -606,6 +606,15 @@ test('the participant page is a chat: transcript above, composer pinned below', 
   assert.match(inputScript, /event\.isComposing/, 'IME composition must not send');
   assert.match(html, /maxlength="200"/);
 
+  // iOS keeps the layout viewport at full height when the keyboard opens, so a
+  // dvh-based grid strands the composer mid-screen behind the keyboard.
+  assert.match(css, /height: var\(--vh, 100dvh\)/);
+  assert.match(inputScript, /visualViewport\?\.addEventListener\('resize'/);
+
+  // A typed contribution has to come back to the room, or a second Deaf
+  // participant cannot follow the first and the sender sees no evidence at all.
+  assert.match(hostScript, /showTypedNote\(segment, message\.name\);\n\s*\/\/[\s\S]{0,220}publishAudienceSegment\(segment\)/);
+
   assert.match(inputScript, /host-status/);
   assert.match(inputScript, /已排队，等待主持人恢复/);
   assert.match(hostScript, /sessionStorage\.setItem\(AUDIENCE_HOST_SESSION_KEY/);
