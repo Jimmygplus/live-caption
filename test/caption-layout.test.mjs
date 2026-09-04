@@ -185,5 +185,6 @@ test('a silent jack input is named as one, not left as "no sound"', async () => 
   const fn = app.match(/function setAudioSignalState[\s\S]*?\n}/)?.[0] || '';
   assert.match(fn, /external mic/i, 'the jack has to be recognised by name');
   assert.match(fn, /耳机孔/, 'and called a headphone jack, not "an input"');
-  assert.match(fn, /state === 'silent' && onJack/, 'only when there is actually no sound');
+  assert.match(fn, /const silentJack = state === 'silent' && onJack/, 'only when there is actually no sound');
+  assert.match(fn, /audioLevelStatus\.title = silentJack/, 'even the tooltip must stay quiet when sound is present');
 });

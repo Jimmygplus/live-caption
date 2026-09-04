@@ -2441,12 +2441,13 @@ function setAudioSignalState(state, message = '') {
   // screen the whole time and said exactly this; nobody could be expected to
   // read it that way, so when there is no sound, spell it out.
   const onJack = /external mic|外接麦克风|line[- ]?in/i.test(device);
+  const silentJack = state === 'silent' && onJack;
   el.audioLevelStatus.dataset.state = state;
-  el.audioLevelStatus.textContent = state === 'silent' && onJack
-    ? '没有声音 · 输入是耳机孔，内置麦克风被旁路 —— 拔掉耳机线，或到系统设置里改回内建麦克风'
+  el.audioLevelStatus.textContent = silentJack
+    ? '没有声音 · 正在从耳机孔收音。请拔掉耳机线，或在系统设置中选择内置麦克风。'
     : message || copy[state] || copy.waiting;
-  el.audioLevelStatus.title = onJack
-    ? `当前输入：${device}。这是耳机孔的输入线路，不是内置麦克风；插着不带麦的耳机时它完全没有声音。`
+  el.audioLevelStatus.title = silentJack
+    ? `当前输入：${device}。系统正在从耳机孔收音；如果耳机没有麦克风，请拔掉耳机线。`
     : `当前输入：${device}`;
   el.device.classList.toggle('no-signal', !monitor && state === 'silent');
   el.device.title = state === 'silent'
