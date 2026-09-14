@@ -1,0 +1,54 @@
+name: Publish website
+
+on:
+  push:
+    branches: [main]
+    paths: [release.json, '.github/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test release validation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Validate publication manifest
+        id: release
+        run: python3 .github/scripts/verify-release.py prepare
+      # This commit belongs to a separate release-only branch, never source main.
+      # The read-only key is repository-scoped; no account-wide token is used.
+      - name: Fetch pinned website release
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SOURCE_REPOSITORY }}
+          ref: ${{ steps.release.outputs.commit }}
+          ssh-key: ${{ secrets.SOURCE_RELEASE_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: _release
+      - name: Verify website contents and hashes
+        run: python3 .github/scripts/verify-release.py verify
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _release/site
+          retention-days: 1
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
