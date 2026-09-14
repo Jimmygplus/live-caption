@@ -1,0 +1,20 @@
+Live Caption — Proprietary / All rights reserved
+
+Copyright (c) 2026 the respective Live Caption copyright holders.
+All rights reserved.
+
+The project-owned software, documentation, and assets are not offered under
+an open-source license. Except as expressly authorized in writing by the
+relevant rights holder, or otherwise permitted by applicable law, no permission
+is granted to copy, modify, redistribute, sublicense, or reuse these materials.
+
+The hosted application may be used through its intended interface. This does
+not grant permission to redistribute or reuse the project code or assets.
+
+This notice does not restrict rights granted by GitHub's Terms of Service for
+public repository content, revoke rights validly granted under an earlier
+license, or replace the separate licenses and notices of third-party materials.
+Third-party rights and required attribution must be preserved.
+
+For additional permissions, contact the repository owner through GitHub:
+https://github.com/Jimmygplus

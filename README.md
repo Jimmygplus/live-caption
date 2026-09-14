@@ -36,6 +36,8 @@ Audio is sent to the recognition service to generate captions. Shared caption ro
 
 ## About this repository
 
+**License: Proprietary — all rights reserved.** Live Caption is not currently open source. You can use the hosted website, but public access does not grant permission to reuse, modify, or redistribute project code or assets. Third-party materials retain their own licenses. See [LICENSE.txt](LICENSE.txt).
+
 This repository contains public product information and the configuration that publishes the website. The application source code and development history are maintained in a private repository. You can use the website without access to that repository.
 
 For feedback, open an issue here with your browser, operating system, and steps to reproduce the problem. Do not include API keys, referral codes, private transcripts, or room invitations.
