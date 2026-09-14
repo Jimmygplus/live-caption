@@ -36,6 +36,6 @@ Audio is sent to the recognition service to generate captions. Shared caption ro
 
 ## About this repository
 
-This repository contains public product information only. The application source code and development history are maintained in a private repository. You can use the website without access to that repository.
+This repository contains public product information and the configuration that publishes the website. The application source code and development history are maintained in a private repository. You can use the website without access to that repository.
 
 For feedback, open an issue here with your browser, operating system, and steps to reproduce the problem. Do not include API keys, referral codes, private transcripts, or room invitations.
