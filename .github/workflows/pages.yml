@@ -31,7 +31,8 @@ jobs:
       - name: Validate publication manifest
         id: release
         run: python3 .github/scripts/verify-release.py prepare
-      # This commit belongs to a separate release-only branch, never source main.
+      # This source-free commit is retained by a private release tag, never main.
+      # Older manifests remain valid through the legacy release archive tag.
       # The read-only key is repository-scoped; no account-wide token is used.
       - name: Fetch pinned website release
         uses: actions/checkout@v4
