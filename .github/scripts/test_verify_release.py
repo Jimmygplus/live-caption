@@ -52,3 +52,19 @@ class ReleaseVerificationTests(unittest.TestCase):
     def test_release_metadata_must_match(self):
         self.manifest['source_commit'] = 'c' * 40
         with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
+    def test_format_two_adds_only_reviewed_foundation_assets(self):
+        self.manifest['format'] = 2
+        for name in module.FILES_BY_FORMAT[2] - module.FILES:
+            (self.root / 'site' / name).write_bytes(b'public fixture')
+            self.manifest['files'][name] = hashlib.sha256(b'public fixture').hexdigest()
+        (self.root / 'release.json').write_text(json.dumps({k: v for k, v in self.manifest.items() if k != 'release_commit'}))
+        module.verify(self.manifest, self.root)
+        (self.root / 'site/room-transport.js').write_text('changed')
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
+    def test_formats_do_not_allow_mixed_or_unknown_asset_sets(self):
+        for version in (True, 0, 3, '2', 2):
+            manifest = copy.deepcopy(self.manifest)
+            manifest['format'] = version
+            with self.assertRaises(ValueError): module.validate_manifest(manifest)

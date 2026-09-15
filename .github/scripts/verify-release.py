@@ -15,13 +15,18 @@ FILES = {
 }
 
 
+FILES_BY_FORMAT = {1: FILES, 2: FILES | {
+    'session-state.js', 'room-state.js', 'viewport-state.js',
+    'media-capture.js', 'room-transport.js', 'design-tokens.css',
+}}
+
 def validate_manifest(manifest):
-    if set(manifest) != {'format', 'source_commit', 'release_commit', 'files'} or manifest['format'] != 1:
+    if set(manifest) != {'format', 'source_commit', 'release_commit', 'files'} or type(manifest['format']) is not int or manifest['format'] not in FILES_BY_FORMAT:
         raise ValueError('Unsupported release manifest')
     for name in ('source_commit', 'release_commit'):
         if not isinstance(manifest[name], str) or not re.fullmatch(r'[0-9a-f]{40}', manifest[name]):
             raise ValueError('Invalid commit reference')
-    if set(manifest['files']) != FILES:
+    if set(manifest['files']) != FILES_BY_FORMAT[manifest['format']]:
         raise ValueError('Release must contain only reviewed website files')
     if any(not isinstance(v, str) or not re.fullmatch(r'[0-9a-f]{64}', v) for v in manifest['files'].values()):
         raise ValueError('Invalid file hash')
@@ -38,7 +43,7 @@ def verify(manifest, release):
     if json.loads((release / 'release.json').read_text()) != {k: v for k, v in manifest.items() if k != 'release_commit'}:
         raise ValueError('Source release does not match the publication manifest')
     site = release / 'site'
-    if {p.name for p in site.iterdir()} != FILES:
+    if {p.name for p in site.iterdir()} != FILES_BY_FORMAT[manifest['format']]:
         raise ValueError('Missing or extra site files')
     for name, expected in manifest['files'].items():
         path = site / name
@@ -54,4 +59,4 @@ if __name__ == '__main__':
             output.write('commit=' + manifest['release_commit'] + '\n')
     else:
         verify(manifest, '_release')
-        print('Verified all 20 website files; no application repository checkout or backend files.')
+        print(f"Verified all {len(manifest['files'])} website files; no application repository checkout or backend files.")
