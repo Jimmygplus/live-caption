@@ -20,16 +20,53 @@ FILES_BY_FORMAT = {1: FILES, 2: FILES | {
     'media-capture.js', 'room-transport.js', 'design-tokens.css',
 }}
 
+# Format 3 keeps the format 1 site at the root and adds the built preview
+# under next/: its page plus content-hashed scripts, styles, fonts and the
+# audio worklet. Those names change with every build, so they are checked by
+# shape: one level of assets, no source maps, nothing else.
+PREVIEW_ENTRY = 'next/index.html'
+PREVIEW_ASSET = re.compile(r'next/assets/[A-Za-z0-9][A-Za-z0-9_-]{0,95}\.(?:js|css|woff2|woff)')
+PREVIEW_DIRS = {'next', 'next/assets'}
+PREVIEW_LIMIT = 64
+FORMATS = {1, 2, 3}
+
+
+def reviewed_names(version, names):
+    if version in FILES_BY_FORMAT:
+        return names == FILES_BY_FORMAT[version]
+    preview = names - FILES
+    return (FILES <= names and PREVIEW_ENTRY in preview and len(preview) <= PREVIEW_LIMIT
+            and all(name == PREVIEW_ENTRY or PREVIEW_ASSET.fullmatch(name) for name in preview))
+
+
 def validate_manifest(manifest):
-    if set(manifest) != {'format', 'source_commit', 'release_commit', 'files'} or type(manifest['format']) is not int or manifest['format'] not in FILES_BY_FORMAT:
+    if set(manifest) != {'format', 'source_commit', 'release_commit', 'files'} or type(manifest['format']) is not int or manifest['format'] not in FORMATS:
         raise ValueError('Unsupported release manifest')
     for name in ('source_commit', 'release_commit'):
         if not isinstance(manifest[name], str) or not re.fullmatch(r'[0-9a-f]{40}', manifest[name]):
             raise ValueError('Invalid commit reference')
-    if set(manifest['files']) != FILES_BY_FORMAT[manifest['format']]:
+    if not isinstance(manifest['files'], dict) or not reviewed_names(manifest['format'], set(manifest['files'])):
         raise ValueError('Release must contain only reviewed website files')
     if any(not isinstance(v, str) or not re.fullmatch(r'[0-9a-f]{64}', v) for v in manifest['files'].values()):
         raise ValueError('Invalid file hash')
+
+
+def site_files(site, version):
+    """Every regular file under site/, as relative paths; links fail."""
+    files, dirs = set(), set()
+    for path in site.rglob('*'):
+        name = path.relative_to(site).as_posix()
+        if path.is_symlink():
+            raise ValueError('Release links are not allowed')
+        if path.is_dir():
+            dirs.add(name)
+        elif path.is_file():
+            files.add(name)
+        else:
+            raise ValueError('Unexpected release contents')
+    if dirs - (PREVIEW_DIRS if version == 3 else set()):
+        raise ValueError('Unexpected release directories')
+    return files
 
 
 def verify(manifest, release):
@@ -43,7 +80,7 @@ def verify(manifest, release):
     if json.loads((release / 'release.json').read_text()) != {k: v for k, v in manifest.items() if k != 'release_commit'}:
         raise ValueError('Source release does not match the publication manifest')
     site = release / 'site'
-    if {p.name for p in site.iterdir()} != FILES_BY_FORMAT[manifest['format']]:
+    if site_files(site, manifest['format']) != set(manifest['files']):
         raise ValueError('Missing or extra site files')
     for name, expected in manifest['files'].items():
         path = site / name
