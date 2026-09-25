@@ -119,3 +119,43 @@ class ReleaseVerificationTests(unittest.TestCase):
     def test_directories_are_refused_before_format_three(self):
         (self.root / 'site/next').mkdir()
         with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
+    def add_snapshot(self, names=None):
+        self.add_preview()
+        self.manifest['format'] = 4
+        (self.root / 'site/v1').mkdir()
+        for name in names if names is not None else module.FILES:
+            (self.root / 'site/v1' / name).write_bytes(b'earlier release')
+            self.manifest['files']['v1/' + name] = hashlib.sha256(b'earlier release').hexdigest()
+        (self.root / 'release.json').write_text(json.dumps({k: v for k, v in self.manifest.items() if k != 'release_commit'}))
+
+    def test_format_four_adds_an_earlier_root_site_under_v1(self):
+        self.add_snapshot()
+        module.verify(self.manifest, self.root)
+        (self.root / 'site/v1/app.js').write_text('changed')
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
+    def test_format_four_needs_every_reviewed_name_and_nothing_else(self):
+        self.add_snapshot(sorted(module.FILES - {'app.js'}))
+        with self.assertRaises(ValueError): module.validate_manifest(self.manifest)
+        for name in ('v1/server.js', 'v1/next/index.html', 'v1/sub/app.js', 'v1/../app.js', 'v1/.env', 'v2/app.js'):
+            manifest = copy.deepcopy(self.manifest)
+            manifest['files']['v1/app.js'] = 'a' * 64
+            manifest['files'][name] = 'a' * 64
+            with self.assertRaises(ValueError, msg=name): module.validate_manifest(manifest)
+
+    def test_format_four_refuses_unlisted_files_and_nested_directories(self):
+        self.add_snapshot()
+        (self.root / 'site/v1/extra.js').write_text('not in the manifest')
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+        (self.root / 'site/v1/extra.js').unlink()
+        (self.root / 'site/v1/deeper').mkdir()
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
+    def test_format_three_refuses_a_snapshot(self):
+        self.add_preview()
+        manifest = copy.deepcopy(self.manifest)
+        manifest['files']['v1/app.js'] = 'a' * 64
+        with self.assertRaises(ValueError): module.validate_manifest(manifest)
+        (self.root / 'site/v1').mkdir()
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)

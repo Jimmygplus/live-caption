@@ -28,12 +28,21 @@ PREVIEW_ENTRY = 'next/index.html'
 PREVIEW_ASSET = re.compile(r'next/assets/[A-Za-z0-9][A-Za-z0-9_-]{0,95}\.(?:js|css|woff2|woff)')
 PREVIEW_DIRS = {'next', 'next/assets'}
 PREVIEW_LIMIT = 64
-FORMATS = {1, 2, 3}
+
+# Format 4 adds, under v1/, an earlier release of the root site kept for
+# comparison: exactly the reviewed root names, nothing more and nothing less.
+SNAPSHOT_FILES = {'v1/' + name for name in FILES}
+SNAPSHOT_DIRS = {'v1'}
+FORMATS = {1, 2, 3, 4}
 
 
 def reviewed_names(version, names):
     if version in FILES_BY_FORMAT:
         return names == FILES_BY_FORMAT[version]
+    if version == 4:
+        if not SNAPSHOT_FILES <= names:
+            return False
+        names = names - SNAPSHOT_FILES
     preview = names - FILES
     return (FILES <= names and PREVIEW_ENTRY in preview and len(preview) <= PREVIEW_LIMIT
             and all(name == PREVIEW_ENTRY or PREVIEW_ASSET.fullmatch(name) for name in preview))
@@ -64,7 +73,8 @@ def site_files(site, version):
             files.add(name)
         else:
             raise ValueError('Unexpected release contents')
-    if dirs - (PREVIEW_DIRS if version == 3 else set()):
+    allowed = PREVIEW_DIRS | SNAPSHOT_DIRS if version == 4 else PREVIEW_DIRS if version == 3 else set()
+    if dirs - allowed:
         raise ValueError('Unexpected release directories')
     return files
 
