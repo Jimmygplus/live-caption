@@ -25,6 +25,9 @@ FILES_BY_FORMAT = {1: FILES, 2: FILES | {
 # audio worklet. Those names change with every build, so they are checked by
 # shape: one level of assets, no source maps, nothing else.
 PREVIEW_ENTRY = 'next/index.html'
+# roomcaption.com serves next/ at its root, so the preview may also carry the
+# two search files, by exact name.
+PREVIEW_SEARCH = {'next/robots.txt', 'next/sitemap.xml'}
 PREVIEW_ASSET = re.compile(r'next/assets/[A-Za-z0-9][A-Za-z0-9_-]{0,95}\.(?:js|css|woff2|woff)')
 PREVIEW_DIRS = {'next', 'next/assets'}
 PREVIEW_LIMIT = 64
@@ -45,7 +48,7 @@ def reviewed_names(version, names):
         names = names - SNAPSHOT_FILES
     preview = names - FILES
     return (FILES <= names and PREVIEW_ENTRY in preview and len(preview) <= PREVIEW_LIMIT
-            and all(name == PREVIEW_ENTRY or PREVIEW_ASSET.fullmatch(name) for name in preview))
+            and all(name == PREVIEW_ENTRY or name in PREVIEW_SEARCH or PREVIEW_ASSET.fullmatch(name) for name in preview))
 
 
 def validate_manifest(manifest):

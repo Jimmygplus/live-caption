@@ -95,9 +95,17 @@ class ReleaseVerificationTests(unittest.TestCase):
         del manifest['files']['app.js']
         with self.assertRaises(ValueError): module.validate_manifest(manifest)
 
+    def test_format_three_may_carry_the_search_files(self):
+        self.add_preview(self.PREVIEW + ('next/robots.txt', 'next/sitemap.xml'))
+        module.verify(self.manifest, self.root)
+        (self.root / 'site/next/robots.txt').write_text('Disallow: /')
+        with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
+
     def test_format_three_rejects_other_names_maps_and_paths(self):
         for name in ('next/assets/index.js.map', 'next/server.js', 'next/assets/../app.js', 'next/assets/sub/a.js',
-                     'next/assets/.env', 'next/src/main.tsx', 'other/index.html', 'next/assets/a.html'):
+                     'next/assets/.env', 'next/src/main.tsx', 'other/index.html', 'next/assets/a.html',
+                     'next/robots.txt.bak', 'next/assets/robots.txt', 'robots.txt', 'next/sitemap.xml.gz',
+                     'v1/next/robots.txt'):
             manifest = copy.deepcopy(self.manifest)
             manifest['format'] = 3
             manifest['files']['next/index.html'] = 'a' * 64
