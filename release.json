@@ -1,18 +1,18 @@
 {
   "format": 4,
-  "source_commit": "a83545da1fdc47f298e67076766677d3abd92ade",
+  "source_commit": "d20290c925b17e80271e53d0e5c5cc7ddbd940ac",
   "files": {
-    "app.js": "8171a139fb7ed0c95e8078554ea9fdd81c5ac894af1d33923c4704d2c82a6906",
+    "app.js": "db516f9719d04730eda2699cc05f7045364fecf4c814e89e14024962f9e44ec3",
     "audience-crypto.js": "b0ddde87d088608ad6ab4f54f0619d298cb052fdb845a0dcf232ec37d96b47e5",
     "audio-check.js": "c7406e68a2edb19ec8791869400734a311dd24d3732465614145bc363ebf4d83",
     "audio-source.js": "3b71c295a6ee32b238591ef516765dca7a02d1f7b17d1e7a5ca49ba1b1b0db92",
     "caption-state.js": "a904f92e9567584144e16bac0685944d0f81f103f476c26018c287131dcc86c1",
     "font-size.js": "bed007fbd04532b6519a2d3960d6dfef644905f677664c99c6c362a412dc55c7",
     "glossaries.json": "4ea88770e1bb06fc7e4ec71b8a5332fc5e0f91674e2c200734fbf2a1713cc94f",
-    "index.html": "9e11df3d8a9a39b42878d4388d840f9b164bdcf4da1369cd3bcec9313493c85d",
+    "index.html": "50f11b1f440a19ea4ff33cabe149280d7cadfaaee1ec524b8ec826782d5cc245",
     "input.css": "7cb8066ad0b50fe1b3ce08edebdc25960117b5b90dc3364233d3f21344dfc985",
-    "input.html": "c1e9d1e9c2c516ee1d8ab72ea3954c7686d6908230ca52a960c6b862098f6ce2",
-    "input.js": "4762aa3354d95d63532449a21e79b2c0c7eb7fd259512e1098024f9f9d6bcdc9",
+    "input.html": "d4c2570875fba178af6b280dbfb6a18bcf2230ffa697259c7ffa5d3d1c5667bd",
+    "input.js": "1d18be1b8fe730d33e1ed24040c2379fe6b808a4cf6564f86307ae1a0cadaed4",
     "join-crypto.js": "f0133b3466ab1d06e15a71010de9301f3fa796e7a2986cabb3a48ab4c7d2bfc9",
     "pcm-worklet.js": "30e77d7036d169face8b30afe5ce47f358b72381e8d27c2b16a5ce128ca632ad",
     "qr.js": "2db9c001ebc911a63c35316b0f19947c67f4a24a1329bcfe6bde51eef287d84b",
@@ -20,7 +20,7 @@
     "styles.css": "360e1668b3ce5a0194a872842a78e5c49d5e560660679178e7b770767b11ac5c",
     "trial-code.js": "bb17ea16d1c0016d55f6fc76daadc68aa98d8e6fdc586b1d5e780382ff3a8c86",
     "trial-config.js": "d1a78c0958a0b8574b492ba353d1d2fd4e23aed659b34fdee0bdddb5ea77c650",
-    "v1.html": "4d1f7dde3ddfe1a4c3b4920a5dc9aa1589c7b46e1f1597eba47583d287cf1507",
+    "v1.html": "acd17f079267b545b9024499a34e6eaa96a843d79dba4a253d066128a28e96e0",
     "v2.css": "c995da98d6805e3722626f5c890579d22d1e05fc8d5f6c1cee87f3647b6dfe00",
     "v1/app.js": "0711076fe577dad01bb0e7d794396f3974c101474db01d89c31c6716dc11976d",
     "v1/audience-crypto.js": "b0ddde87d088608ad6ab4f54f0619d298cb052fdb845a0dcf232ec37d96b47e5",
@@ -53,7 +53,7 @@
     "next/assets/atkinson-hyperlegible-next-latin-500-normal-gHP6TDRs.woff2": "f5243b80fbcabc6756a4f67a2843a581216ecb89019a789335b85c924f05702e",
     "next/assets/atkinson-hyperlegible-next-latin-700-normal-C2qZD_Q9.woff": "c5125982a94a2cfa7e504d852a64f75ca6bc1188be8b32697715760f09da6d25",
     "next/assets/atkinson-hyperlegible-next-latin-700-normal-Dpiyiu63.woff2": "0dbe07ed7679407db9d90f747d5ca3bd1b2bb7ccbcbe41c8246cfc6d2c7bc3bc",
-    "next/assets/index-BdExllct.js": "47458e13289f03ebd43d900b7c37952fa505d131223a66446627136b76bbba10",
+    "next/assets/index-BSizW-kq.js": "b6e06b66bc6a5b15bc6027fc1b173c547d9d0baab0c3a8c39e77c00b32df1cae",
     "next/assets/index-pE7e1Igq.css": "81853ce87351df63da98644faf3bf0845800a94d1c6247ce8bdebdc023c8b4e8",
     "next/assets/lib-B8F_lhbZ.js": "88b73bc5f0acf7d24cdd4ba5fc074ca176a7aa599fcb88103cfd186c4b9d2009",
     "next/assets/newsreader-latin-500-italic-Bsgye1qA.woff2": "3d184d574e56fcb42f4c1920d4130db872ec0af6de9a0ad0f9e850444be44b7d",
@@ -73,9 +73,9 @@
     "next/assets/pcm-worklet-BA2lCtD0.js": "30e77d7036d169face8b30afe5ce47f358b72381e8d27c2b16a5ce128ca632ad",
     "next/favicon.ico": "79763df59a001ac0b93c974dfd7e47af04eee0c5ef9ed2972a2ce14c32a07c57",
     "next/favicon.svg": "db62a5fe5d9ff5e49a510d2f80ff375281aa246659231e0aeb03cbb4ba889a25",
-    "next/index.html": "100b322ef5aba00b33008fd95f1d7f0b1ce88b9493ba8076097ae5ee6525a76c",
+    "next/index.html": "3fd54a9c229e4e638fa54a64af5044794fcb6f6521587cda91c6d77017c0a81f",
     "next/robots.txt": "f7bbd14953cd621ff2245b17f80be0f467ec2f99b4ea5184b98ebd8797cfd453",
     "next/sitemap.xml": "78cde0971512977f367675469735f5a8aac28f15bd4f48abfffeb9b0fbd2562c"
   },
-  "release_commit": "45ee6a387a029b505c1c1e6c4feae9d219b5e960"
+  "release_commit": "485026461d7c9de16afe5d214bf80e08878a5d2e"
 }
