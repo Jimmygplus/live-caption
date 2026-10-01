@@ -31,7 +31,9 @@ PREVIEW_SEARCH = {'next/robots.txt', 'next/sitemap.xml', 'next/favicon.svg', 'ne
                   'next/apple-touch-icon.png'}
 PREVIEW_ASSET = re.compile(r'next/assets/[A-Za-z0-9][A-Za-z0-9_-]{0,95}\.(?:js|css|woff2|woff)')
 PREVIEW_DIRS = {'next', 'next/assets'}
-PREVIEW_LIMIT = 64
+# The serif caption fonts ship as unicode-range subsets (about 98 woff2 files)
+# next to the app's scripts and styles, so the preview holds well over 64 files.
+PREVIEW_LIMIT = 192
 
 # Format 4 adds, under v1/, an earlier release of the root site kept for
 # comparison: exactly the reviewed root names, nothing more and nothing less.

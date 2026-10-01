@@ -114,6 +114,16 @@ class ReleaseVerificationTests(unittest.TestCase):
             manifest['files'][name] = 'a' * 64
             with self.assertRaises(ValueError, msg=name): module.validate_manifest(manifest)
 
+    def test_format_three_allows_the_font_subsets_up_to_the_limit(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest['format'] = 3
+        manifest['files']['next/index.html'] = 'a' * 64
+        for i in range(module.PREVIEW_LIMIT - 1):
+            manifest['files'][f'next/assets/noto-serif-sc-{i}-600-normal-a1b2c3.woff2'] = 'a' * 64
+        module.validate_manifest(manifest)
+        manifest['files']['next/assets/one-too-many.woff2'] = 'a' * 64
+        with self.assertRaises(ValueError): module.validate_manifest(manifest)
+
     def test_format_three_rejects_unlisted_files_directories_and_links(self):
         self.add_preview()
         (self.root / 'site/next/assets/extra-abc.js').write_text('not in the manifest')
