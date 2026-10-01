@@ -97,7 +97,7 @@ class ReleaseVerificationTests(unittest.TestCase):
 
     def test_format_three_may_carry_the_search_files(self):
         self.add_preview(self.PREVIEW + ('next/robots.txt', 'next/sitemap.xml', 'next/favicon.svg',
-                                         'next/favicon.ico', 'next/apple-touch-icon.png'))
+                                         'next/favicon.ico', 'next/apple-touch-icon.png', 'next/licenses.txt'))
         module.verify(self.manifest, self.root)
         (self.root / 'site/next/robots.txt').write_text('Disallow: /')
         with self.assertRaises(ValueError): module.verify(self.manifest, self.root)
@@ -107,7 +107,8 @@ class ReleaseVerificationTests(unittest.TestCase):
                      'next/assets/.env', 'next/src/main.tsx', 'other/index.html', 'next/assets/a.html',
                      'next/robots.txt.bak', 'next/assets/robots.txt', 'robots.txt', 'next/sitemap.xml.gz',
                      'v1/next/robots.txt', 'next/favicon.png', 'next/assets/favicon.ico', 'favicon.ico',
-                     'next/apple-touch-icon-precomposed.png'):
+                     'next/apple-touch-icon-precomposed.png', 'next/licenses.md', 'next/assets/licenses.txt',
+                     'licenses.txt', 'next/LICENSE.txt'):
             manifest = copy.deepcopy(self.manifest)
             manifest['format'] = 3
             manifest['files']['next/index.html'] = 'a' * 64
